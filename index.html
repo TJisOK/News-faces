@@ -415,7 +415,7 @@ async function fetchAll(){
   // stalest feeds first, so repeated refreshes keep every section topped up
   const feeds=FEEDS.filter(f=>S.sources[f.id]).sort((a,b)=>(a.last||0)-(b.last||0));
   const queue=[...feeds]; fetchProgress={done:0,total:feeds.length};
-  const gap=isLocalServer?250:3500; // public proxies allow roughly one request every few seconds
+  const gap=isLocalServer?250:6500; // rss2json allows about 10 requests a minute per IP; staying under it avoids 60 s penalties
   const worker=async()=>{
     while(queue.length){
       const f=queue.shift(); const res=await fetchFeed(f); fetchProgress.done++;
@@ -527,10 +527,11 @@ function flip(mutate){
   }
 }
 function setStatus(){
-  const st=Object.values(feedState); const loading=st.filter(s=>s==='loading').length, fail=st.filter(s=>s==='fail'||s==='limited').length;
+  const st=Object.values(feedState); const loading=st.filter(s=>s==='loading').length, fail=st.filter(s=>s==='fail').length, limited=st.filter(s=>s==='limited').length;
   const parts=[`${current.length} photos`];
   if(fetchProgress) parts.push(`fetching feeds ${Math.min(fetchProgress.done,fetchProgress.total)}/${fetchProgress.total}…`); else if(loading) parts.push(`loading ${loading} feed${loading>1?'s':''}…`);
   if(fail) parts.push(`${fail} feed${fail>1?'s':''} unavailable`);
+  if(limited) parts.push(`proxy throttled, ${limited} waiting`);
   const pending=analysisQueue.length+analyzing; if(pending) parts.push(`analysing colours ${analyzed}/${analyzeTotal}`);
   $('#status').textContent=parts.join(' · ');
 }
