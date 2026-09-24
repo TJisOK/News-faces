@@ -108,6 +108,12 @@ header .status{color:var(--muted);font-size:12.5px;min-width:0;white-space:nowra
 #faceMsg{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);max-width:70%;text-align:center;color:var(--fg);background:rgba(20,20,26,.85);border:1px solid var(--line);padding:14px 18px;border-radius:12px;font-size:13.5px;line-height:1.5;pointer-events:none;backdrop-filter:blur(8px)}
 #faceMsg:empty{display:none}
 #cam{position:absolute;width:2px;height:2px;opacity:0;pointer-events:none}
+#hov{position:fixed;z-index:20;pointer-events:none;opacity:0;transform:scale(1);transition:opacity .12s,transform .18s cubic-bezier(.2,.8,.2,1);transform-origin:center;border-radius:12%;overflow:hidden;background:#222}
+#hov img{width:100%;height:100%;object-fit:cover;display:block}
+#hov.show{opacity:1}
+#hovCap{position:fixed;z-index:21;pointer-events:none;background:rgba(20,20,26,.94);border:1px solid var(--line);border-radius:8px;padding:6px 10px;font-size:11.5px;line-height:1.35;max-width:260px;color:var(--fg);opacity:0;transition:opacity .12s;backdrop-filter:blur(8px)}
+#hovCap.show{opacity:1}
+#hovCap b{display:block;color:var(--muted);font-size:10px;text-transform:uppercase;letter-spacing:.4px;margin-bottom:2px}
 .modes{display:flex;gap:2px;background:var(--panel2);padding:3px;border-radius:10px;border:1px solid var(--line)}
 .modes button{padding:5px 11px;border-radius:7px;font-size:12.5px;color:var(--muted);font-weight:600}
 .modes button.on{background:#fff;color:#000}
@@ -222,7 +228,7 @@ input[type=color]{width:34px;height:26px;border:0;background:none;padding:0;bord
     </header>
     <canvas id="spectrum" height="6" title="Colour spectrum of the current view — click to jump"></canvas>
     <div id="stage"><div id="grid"></div><div id="empty" hidden>No photos match the current filters.</div>
-      <div id="face"><canvas id="mosaic"></canvas><canvas id="pip" width="320" height="240"></canvas><div id="faceMsg"></div><video id="cam" playsinline muted autoplay></video></div>
+      <div id="face"><canvas id="mosaic"></canvas><div id="hov"><img alt=""></div><div id="hovCap"></div><canvas id="pip" width="320" height="240"></canvas><div id="faceMsg"></div><video id="cam" playsinline muted autoplay></video></div>
     </div>
   </div>
 </div>
@@ -937,6 +943,23 @@ face.addEventListener('pointermove',e=>{if(!fpts.has(e.pointerId))return;fpts.se
   else if(fdrag){const dx=e.clientX-fdrag.x,dy=e.clientY-fdrag.y;if(Math.hypot(dx,dy)>4)fdrag.moved=true;
     if(fdrag.head&&fdrag.moved){const u=fitted.cssCell*FZ.z*(lastDraw?lastDraw.cols:F.cols);fdrag.head.pos={x:fdrag.pos0.x+dx/u,y:fdrag.pos0.y+dy/u};if(!dragDrawPending){dragDrawPending=true;requestAnimationFrame(()=>{dragDrawPending=false;drawMosaic();});}}
     else{FZ.tx=fdrag.tx+dx;FZ.ty=fdrag.ty+dy;applyFZ(false);}}});
+// ---- hover: pop the news photo under the cursor out of the mosaic, with its source and title
+const hov=$('#hov'),hovImg=hov.querySelector('img'),hovCap=$('#hovCap');let hovKey='';
+function hideHover(){hovKey='';hov.classList.remove('show');hovCap.classList.remove('show');hov.style.transform='scale(1)';}
+function showHover(e){
+  if(fdrag||fpinch||e.pointerType==='touch'){hideHover();return;}
+  const hit=e.target===mosaic?faceAt(e.clientX,e.clientY):null;const a=hit&&hit.item.face.assign;const j=a?a[hit.cy*lastDraw.cols+hit.cx]:-1;
+  if(!hit||j<0||!pool||!pool.list[j]){hideHover();return;}
+  const p=pool.list[j],key=hit.item.face.id+':'+hit.cy*lastDraw.cols+hit.cx+':'+p.id;
+  hovCap.style.left=Math.min(innerWidth-280,e.clientX+16)+'px';hovCap.style.top=Math.min(innerHeight-70,e.clientY+18)+'px';
+  if(key===hovKey)return;hovKey=key;
+  const r=mosaic.getBoundingClientRect(),c=hit.cellCss,x=r.left+(hit.item.face.pos.x*lastDraw.cols-lastDraw.minX+hit.cx)*c,y=r.top+(hit.item.face.pos.y*lastDraw.cols-lastDraw.minY+hit.cy)*c;
+  const t=thumbFor(p);hovImg.src=t.img?t.img.src:p.img;
+  hov.style.left=x+'px';hov.style.top=y+'px';hov.style.width=c+'px';hov.style.height=c+'px';
+  const sc=Math.max(1.8,Math.min(6,64/c));hov.style.boxShadow=`0 0 0 ${2/sc}px #fff, 0 ${10/sc}px ${30/sc}px #000c`;hov.style.transform='scale(1)';hov.classList.add('show');requestAnimationFrame(()=>{hov.style.transform=`scale(${sc})`;});
+  hovCap.innerHTML=`<b>${p.source} · ${p.sec} · ${fmtAgo(p.time)}</b>${p.title}`;hovCap.classList.add('show');
+}
+face.addEventListener('pointermove',showHover);face.addEventListener('pointerleave',hideHover);face.addEventListener('pointerdown',hideHover);
 const fUp=e=>{fpts.delete(e.pointerId);if(fpts.size<2)fpinch=null;if(fpts.size===0){if(fdrag&&!fdrag.moved&&fdrag.onMosaic)clickCell(e);fdrag=null;mosaic.style.cursor='grab';}};
 face.addEventListener('pointerup',fUp);face.addEventListener('pointercancel',fUp);
 face.addEventListener('dblclick',e=>{fzAt(Math.abs(FZ.z-1)>0.05?1:2.5,e.clientX,e.clientY,true);if(Math.abs(FZ.z-1)<0.05){FZ.tx=0;FZ.ty=0;applyFZ(true);}});
