@@ -189,9 +189,9 @@ input[type=color]{width:34px;height:26px;border:0;background:none;padding:0;bord
       <div class="ctl"><label>Variety <output id="fo-variety"></output></label><input type="range" id="f-variety" min="0" max="1" step="0.01"></div>
       <div class="ctl"><label>Stability <output id="fo-stability"></output></label><input type="range" id="f-stability" min="0" max="1" step="0.01"></div>
       <div class="ctl"><label>Frame rate <output id="fo-fps"></output></label><input type="range" id="f-fps" min="1" max="30" step="1"></div>
-      <div class="row"><button class="btn rec" id="recBtn2">● Record</button><button class="btn" id="savePng">Download PNG</button></div>
+      <div class="row" style="flex-wrap:wrap"><button class="btn" id="arrangeBtn" title="Reset every head to the same size in a tidy grid">Equal size &amp; arrange</button><button class="btn rec" id="recBtn2">● Record</button><button class="btn" id="savePng">Download PNG</button></div>
       <p class="hint">Recording captures the live mosaic at up to 1920px and exports an MP4 (H.264) straight from the browser.</p>
-      <p class="hint">Only photos passing the Filters and Sources above are used, so those controls change which news the face is made of. Click a cell to open its photo. Pinch or <kbd>ctrl</kbd>+scroll to zoom the mosaic.</p>
+      <p class="hint">Every head is rendered at the same size. Drag a head to move it on its own; drag empty space to pan; pinch or <kbd>ctrl</kbd>+scroll zooms all heads together. “Equal size &amp; arrange” snaps them back into a grid. Only photos passing the Filters and Sources above are used. Click a cell to open its photo.</p>
     </details>
 
     <details class="sec"><summary>Sources</summary>
@@ -629,11 +629,12 @@ function scheduleRefresh(){clearInterval(refreshTimer);if(S.refreshMin>0)refresh
 if(matchMedia('(max-width:760px)').matches&&!('collapsed'in JSON.parse(localStorage.getItem('newsgal.settings.v1')||'{}')))S.collapsed=true;
 
 /* ------------------------------------------------------------ face mosaic */
-const FDEF={cols:48,pad:1.45,gap:0.06,outline:'head',multi:false,mirror:true,pip:true,hue:0,sat:1,bright:0,contrast:1,tint:'#ff7a3d',tintAmt:0,match:'avg',variety:0.25,stability:0.5,fps:12};
-S.face=Object.assign({},FDEF,S.face||{}); const F=S.face; F.freeze=false; delete F.oval;
+const FDEF={cols:48,pad:1.9,gap:0.06,outline:'head',multi:false,mirror:true,pip:true,hue:0,sat:1,bright:0,contrast:1,tint:'#ff7a3d',tintAmt:0,match:'avg',variety:0.25,stability:0.5,fps:12};
+S.face=Object.assign({},FDEF,S.face||{}); const F=S.face; F.freeze=false; delete F.oval; if(F.pad<1.6)F.pad=1.9; // older tight framing cut hair off
 let MODE='gallery';
 const FFMT={cols:v=>`${v} cells`,pad:v=>'×'+(+v).toFixed(2),gap:v=>Math.round(v*100)+'%',hue:v=>(v>0?'+':'')+v+'°',sat:v=>'×'+(+v).toFixed(2),bright:v=>(v>0?'+':'')+(+v).toFixed(2),contrast:v=>'×'+(+v).toFixed(2),tintAmt:v=>Math.round(v*100)+'%',variety:v=>Math.round(v*100)+'%',stability:v=>Math.round(v*100)+'%',fps:v=>v+' fps'};
 for(const k in FFMT){const el=$('#f-'+k),out=$('#fo-'+k);el.value=F[k];out.textContent=FFMT[k](F[k]);el.addEventListener('input',()=>{F[k]=+el.value;out.textContent=FFMT[k](F[k]);if(k==='cols')fitMosaic();saveSettings();});}
+
 for(const k of ['mirror','pip','freeze']){const el=$('#f-'+k);el.checked=!!F[k];el.addEventListener('change',()=>{F[k]=el.checked;$('#pip').style.display=F.pip?'':'none';saveSettings();});}
 $('#pip').style.display=F.pip?'':'none';
 $('#f-match').value=F.match;$('#f-match').addEventListener('change',e=>{F.match=e.target.value;poolKey='';saveSettings();});
@@ -750,10 +751,10 @@ function buildPool(){const list=current.filter(p=>p.color&&!p.color.fail);const 
 function matchCells(item,cols,rows){
   const P=buildPool();if(!P.n)return null;const N=cols*rows;let assign=item.face.assign;if(!assign||assign.length!==N)assign=item.face.assign=new Int32Array(N).fill(-1);
   const data=item.data,mask=item.mask,use=new Int32Array(P.n),lab=P.lab,n=P.n,varK=F.variety*6,stab=F.stability,cx=(cols-1)/2,cy=(rows-1)/2;
-  const useMask=F.outline==='head'&&mask,oval=F.outline==='oval'||(F.outline==='head'&&!mask);
-  const rx=useMask?cols*0.6:cols/2,ry=useMask?rows*0.6:rows/2; // with a mask the ellipse only trims the far corners (shoulders)
+  const useMask=F.outline==='head'&&mask,oval=F.outline==='oval'||(F.outline==='head'&&!mask),rx=cols/2,ry=rows/2;
   for(let i=0;i<N;i++){
-    if(useMask||oval){const x=i%cols,y=(i/cols)|0;const dx=(x-cx)/rx,dy=(y-cy)/ry;if(dx*dx+dy*dy>1||(useMask&&mask[i]<115)){assign[i]=-1;continue;}}
+    if(useMask){if(mask[i]<40){assign[i]=-1;continue;}}
+    else if(oval){const x=i%cols,y=(i/cols)|0;const dx=(x-cx)/rx,dy=(y-cy)/ry;if(dx*dx+dy*dy>1){assign[i]=-1;continue;}}
     let[r,g,b]=adjustTarget(data[i*4],data[i*4+1],data[i*4+2]);const[L,A,B]=rgb2lab(r,g,b);
     let best=-1,bd=1e18;
     for(let j=0;j<n;j++){const dl=L-lab[j*3],da=A-lab[j*3+1],db=B-lab[j*3+2];let d=dl*dl+da*da+db*db;if(varK){const pen=varK*use[j];d+=pen*pen;}if(d<bd){bd=d;best=j;}}
@@ -774,9 +775,10 @@ function thumbFor(p){let t=thumbs.get(p.id);if(t)return t;t={img:null,ok:false};
 // ---- sampling, layout, drawing, loop
 const sampleC=document.createElement('canvas'),sctx=sampleC.getContext('2d',{willReadFrequently:true});
 const maskS=document.createElement('canvas'),msctx=maskS.getContext('2d',{willReadFrequently:true});
-let lastSample=null,lastFrame=0,lastDetect=0,loopOn=false,fitted={cols:0,w:0,h:0,n:0},lastDraw=null;
+let lastSample=null,lastFrame=0,lastDetect=0,loopOn=false,fitted={cols:0,n:0,cssCell:0},lastDraw=null,prevCenter=null;
 const rowsFor=cols=>Math.max(1,Math.round(cols*1.25));
-function cropRect(b){const w=Math.max(b.w,b.h)*F.pad,h=w*1.25;return[bcx(b)-w/2,bcy(b)-b.h*0.06-h/2,w,h];}
+// generous framing, shifted up so hair fits; the segmentation mask, not the crop, defines the outline
+function cropRect(b){const w=Math.max(b.w,b.h)*F.pad,h=w*1.25;return[bcx(b)-w/2,bcy(b)-b.h*0.15-h/2,w,h];}
 function sampleAll(){
   const src=srcEl();if(!src||!srcW()||!faces.length)return;const cols=F.cols,rows=rowsFor(cols);sampleC.width=cols;sampleC.height=rows;maskS.width=cols;maskS.height=rows;
   const items=[];
@@ -788,26 +790,60 @@ function sampleAll(){
     let mask=null;
     if(F.outline==='head'&&maskValid){msctx.clearRect(0,0,cols,rows);msctx.imageSmoothingEnabled=true;msctx.save();if(F.mirror){msctx.translate(cols,0);msctx.scale(-1,1);}
       try{msctx.drawImage(maskC,sx*maskScale,sy*maskScale,sw*maskScale,sh*maskScale,0,0,cols,rows);}catch(e){}msctx.restore();
-      const md=msctx.getImageData(0,0,cols,rows).data;mask=new Uint8Array(cols*rows);for(let i=0;i<mask.length;i++)mask[i]=md[i*4+3];}
+      const md=msctx.getImageData(0,0,cols,rows).data;const cov=new Float32Array(cols*rows);for(let i=0;i<cov.length;i++)cov[i]=md[i*4+3];
+      mask=refineMask(cov,f,cols,rows,sx,sy,sw,sh);}
     items.push({face:f,data,mask});
   }
   lastSample={cols,rows,items};
 }
+// coverage (0-255 per cell) → head alpha: the face box only *identifies* which region is the head (flood-fill seed); the outline itself comes entirely from segmentation. Holes filled, smoothed over time, soft edges. Returns null when segmentation found no face here (caller falls back to an oval).
+function refineMask(cov,f,cols,rows,sx,sy,sw,sh){
+  const N=cols*rows,b=f.box;
+  let bx=(b.x-sx)/sw*cols,by=(b.y-sy)/sh*rows;const bw=b.w/sw*cols,bh=b.h/sh*rows;if(F.mirror)bx=cols-bx-bw;
+  const x0=clamp(Math.floor(bx),0,cols-1),x1=clamp(Math.ceil(bx+bw),0,cols-1),y0=clamp(Math.floor(by),0,rows-1),y1=clamp(Math.ceil(by+bh),0,rows-1);
+  const filled=new Float32Array(cov);
+  for(let y=1;y<rows-1;y++)for(let x=1;x<cols-1;x++){const i=y*cols+x;if(cov[i]<115){let n=0;if(cov[i-1]>=115)n++;if(cov[i+1]>=115)n++;if(cov[i-cols]>=115)n++;if(cov[i+cols]>=115)n++;if(n>=3)filled[i]=200;}}
+  const keep=new Uint8Array(N),stack=[];let seeds=0,boxCells=0;
+  for(let y=y0;y<=y1;y++)for(let x=x0;x<=x1;x++){const i=y*cols+x;boxCells++;if(filled[i]>=115){keep[i]=1;stack.push(i);seeds++;}}
+  if(seeds<boxCells*0.08){f.maskEMA=null;return null;} // segmentation missed this face → oval for this frame
+  while(stack.length){const i=stack.pop(),x=i%cols,y=(i/cols)|0;
+    if(x>0&&!keep[i-1]&&filled[i-1]>=90){keep[i-1]=1;stack.push(i-1);}if(x<cols-1&&!keep[i+1]&&filled[i+1]>=90){keep[i+1]=1;stack.push(i+1);}
+    if(y>0&&!keep[i-cols]&&filled[i-cols]>=90){keep[i-cols]=1;stack.push(i-cols);}if(y<rows-1&&!keep[i+cols]&&filled[i+cols]>=90){keep[i+cols]=1;stack.push(i+cols);}}
+  for(let i=0;i<N;i++)if(!keep[i])filled[i]=0;
+  let ema=f.maskEMA;if(!ema||ema.length!==N)ema=f.maskEMA=new Float32Array(filled);else if(srcKind==='camera'){for(let i=0;i<N;i++)ema[i]+=(filled[i]-ema[i])*0.5;}else ema.set(filled);
+  const out=new Uint8Array(N);for(let i=0;i<N;i++){const t=clamp((ema[i]-60)/120,0,1);out[i]=Math.round(t*t*(3-2*t)*255);}
+  return out;
+}
+// layout: every head is the same size (cols×rows cells). Positions are in head-widths (u): x=1 is one head to the right.
+const GU=()=>faces.length>1?0.06:0;
 function layoutFor(n){const k=Math.max(1,Math.ceil(Math.sqrt(n)));return{k,r:Math.ceil(n/k)};}
-function fitMosaic(){const cols=F.cols,rows=rowsFor(cols),n=Math.max(1,faces.length),{k,r}=layoutFor(n),gc=n>1?2:0;const totalC=k*cols+(k-1)*gc,totalR=r*rows+(r-1)*gc;
-  const W=face.clientWidth||stage.clientWidth,H=face.clientHeight||stage.clientHeight;let w=Math.min(W*0.94,H*0.94*totalC/totalR),h=w*totalR/totalC;mosaic.style.width=w+'px';mosaic.style.height=h+'px';fitted={cols,rows,n,k,r,gc,totalC,totalR,w,h};}
+function slotPos(i,n){const{k}=layoutFor(n),gu=n>1?0.06:0;return{x:(i%k)*(1+gu),y:((i/k)|0)*(1.25+gu)};}
+function arrangeFaces(){faces.forEach((f,i)=>{f.pos=slotPos(i,faces.length);});prevCenter=null;FZ.z=1;FZ.tx=0;FZ.ty=0;applyFZ(true);fitMosaic();}
+function fitMosaic(){const cols=F.cols,rows=rowsFor(cols),n=Math.max(1,faces.length),{k,r}=layoutFor(n),gu=n>1?0.06:0;const totalC=(k+(k-1)*gu)*cols,totalR=r*rows+(r-1)*gu*cols;
+  const W=face.clientWidth||stage.clientWidth,H=face.clientHeight||stage.clientHeight;const cssCell=Math.min(W*0.94/totalC,H*0.94/totalR);fitted={cols,n,cssCell};prevCenter=null;}
 function drawMosaic(){
   if(!lastSample||!lastSample.items.length)return;const{cols,rows,items}=lastSample;
-  if(fitted.n!==items.length||fitted.cols!==cols)fitMosaic();
-  const{k,gc,totalC,totalR}=fitted;const cssCell=(fitted.w||300)/totalC;let cell=Math.ceil(cssCell*devicePixelRatio*Math.max(1,FZ.z));cell=clamp(cell,2,Math.min(96,Math.floor(4096/Math.max(totalC,totalR))));
-  const W=totalC*cell,H=totalR*cell;if(mosaic.width!==W||mosaic.height!==H){mosaic.width=W;mosaic.height=H;}
-  mctx.clearRect(0,0,W,H);const g=cell*F.gap,inner=cell-g;lastDraw={cell,k,gc,cols,rows,n:items.length};
+  if(fitted.n!==items.length||fitted.cols!==cols||!fitted.cssCell)fitMosaic();
+  items.forEach((it,i)=>{if(!it.face.pos)it.face.pos=slotPos(i,items.length);});
+  let minX=1e9,minY=1e9,maxX=-1e9,maxY=-1e9;
+  for(const it of items){const x=it.face.pos.x*cols,y=it.face.pos.y*cols;if(x<minX)minX=x;if(y<minY)minY=y;if(x+cols>maxX)maxX=x+cols;if(y+rows>maxY)maxY=y+rows;}
+  const totalC=maxX-minX,totalR=maxY-minY,ccx=(minX+maxX)/2,ccy=(minY+maxY)/2;
+  // the canvas is centred in its container: when its extents change, shift the pan so nothing on screen moves
+  if(prevCenter&&(prevCenter.x!==ccx||prevCenter.y!==ccy)){FZ.tx+=(ccx-prevCenter.x)*fitted.cssCell*FZ.z;FZ.ty+=(ccy-prevCenter.y)*fitted.cssCell*FZ.z;applyFZ(false);}
+  prevCenter={x:ccx,y:ccy};
+  const cssW=totalC*fitted.cssCell,cssH=totalR*fitted.cssCell;if(!(Math.abs(parseFloat(mosaic.style.width)-cssW)<=0.5&&Math.abs(parseFloat(mosaic.style.height)-cssH)<=0.5)){mosaic.style.width=cssW+'px';mosaic.style.height=cssH+'px';}
+  let cell=Math.ceil(fitted.cssCell*devicePixelRatio*Math.max(1,FZ.z));cell=clamp(cell,2,Math.min(96,Math.floor(4096/Math.max(totalC,totalR))));
+  const W=Math.round(totalC*cell),H=Math.round(totalR*cell);if(mosaic.width!==W||mosaic.height!==H){mosaic.width=W;mosaic.height=H;}
+  mctx.clearRect(0,0,W,H);const g=cell*F.gap,inner=cell-g;lastDraw={cell,cols,rows,minX,minY,n:items.length};
   for(let fi=0;fi<items.length;fi++){
-    const a=matchCells(items[fi],cols,rows);if(!a){mctx.fillStyle='#8e8ea0';mctx.font='14px sans-serif';mctx.fillText('Waiting for colour analysis…',10,20);return;}
-    const ox=(fi%k)*(cols+gc)*cell,oy=((fi/k)|0)*(rows+gc)*cell,P=pool;
-    for(let i=0;i<a.length;i++){const j=a[i];if(j<0)continue;const p=P.list[j];const x=ox+(i%cols)*cell+g/2,y=oy+((i/cols)|0)*cell+g/2;const t=thumbFor(p);
-      if(t.ok){const im=t.img,nw=im.naturalWidth,nh=im.naturalHeight,s=Math.min(nw,nh);try{mctx.drawImage(im,(nw-s)/2,(nh-s)/2,s,s,x,y,inner,inner);}catch(e){t.ok=false;}}
-      else{const c=colorRGB(p);mctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;mctx.fillRect(x,y,inner,inner);}}
+    const it=items[fi],a=matchCells(it,cols,rows);if(!a){mctx.fillStyle='#8e8ea0';mctx.font='14px sans-serif';mctx.fillText('Waiting for colour analysis…',10,20);return;}
+    const ox=(it.face.pos.x*cols-minX)*cell,oy=(it.face.pos.y*cols-minY)*cell,P=pool,mask=F.outline==='head'?it.mask:null;
+    for(let i=0;i<a.length;i++){const j=a[i];if(j<0)continue;const p=P.list[j];const al=mask?mask[i]/255:1;const sz=al<1?inner*(0.55+0.45*al):inner;
+      const x=ox+(i%cols)*cell+g/2+(inner-sz)/2,y=oy+((i/cols)|0)*cell+g/2+(inner-sz)/2;const t=thumbFor(p);
+      if(al<1)mctx.globalAlpha=al;
+      if(t.ok){const im=t.img,nw=im.naturalWidth,nh=im.naturalHeight,s=Math.min(nw,nh);try{mctx.drawImage(im,(nw-s)/2,(nh-s)/2,s,s,x,y,sz,sz);}catch(e){t.ok=false;}}
+      else{const c=colorRGB(p);mctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;mctx.fillRect(x,y,sz,sz);}
+      if(al<1)mctx.globalAlpha=1;}
   }
 }
 function drawPip(){if(!F.pip)return;const src=srcEl();if(!src||!srcW())return;const sw=srcW(),sh=srcH();const s=Math.min(pip.width/sw,pip.height/sh),w=sw*s,h=sh*s,ox=(pip.width-w)/2,oy=(pip.height-h)/2;
@@ -887,21 +923,27 @@ function fzBegin(cx,cy){fzStart={z:FZ.z,cx,cy};}
 function fzUpdate(scale){if(!fzStart)return;fzAt(fzStart.z*scale,fzStart.cx,fzStart.cy,false);}
 function fzEnd(){fzStart=null;}
 const fpts=new Map();let fdrag=null,fpinch=null;
+// which head (and cell) is under a screen point, in absolute cell coordinates
+function faceAt(clientX,clientY){if(!lastDraw||!lastSample)return null;const r=mosaic.getBoundingClientRect();const{cell,cols,rows,minX,minY}=lastDraw;
+  const px=(clientX-r.left)/r.width*mosaic.width/cell+minX,py=(clientY-r.top)/r.height*mosaic.height/cell+minY;
+  for(const it of lastSample.items){const x=it.face.pos.x*cols,y=it.face.pos.y*cols;if(px>=x&&px<x+cols&&py>=y&&py<y+rows)return{item:it,cx:Math.floor(px-x),cy:Math.floor(py-y),cellCss:r.width/mosaic.width*cell};}
+  return null;}
+let dragDrawPending=false;
 face.addEventListener('pointerdown',e=>{e.preventDefault();face.setPointerCapture?.(e.pointerId);fpts.set(e.pointerId,{x:e.clientX,y:e.clientY});const arr=[...fpts.values()];
-  if(arr.length===1)fdrag={x:e.clientX,y:e.clientY,tx:FZ.tx,ty:FZ.ty,moved:false,onMosaic:e.target===mosaic};else if(arr.length===2){fdrag=null;fpinch={d0:Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y),z0:FZ.z};}});
+  if(arr.length===1){const hit=e.target===mosaic?faceAt(e.clientX,e.clientY):null;fdrag={x:e.clientX,y:e.clientY,tx:FZ.tx,ty:FZ.ty,moved:false,onMosaic:e.target===mosaic,head:hit?hit.item.face:null,pos0:hit?{...hit.item.face.pos}:null};mosaic.style.cursor=hit?'grabbing':'grab';}
+  else if(arr.length===2){fdrag=null;fpinch={d0:Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y),z0:FZ.z};}});
 face.addEventListener('pointermove',e=>{if(!fpts.has(e.pointerId))return;fpts.set(e.pointerId,{x:e.clientX,y:e.clientY});const arr=[...fpts.values()];
   if(fpinch&&arr.length===2){const d=Math.hypot(arr[0].x-arr[1].x,arr[0].y-arr[1].y);fzAt(fpinch.z0*d/fpinch.d0,(arr[0].x+arr[1].x)/2,(arr[0].y+arr[1].y)/2,false);}
-  else if(fdrag){const dx=e.clientX-fdrag.x,dy=e.clientY-fdrag.y;if(Math.hypot(dx,dy)>4)fdrag.moved=true;FZ.tx=fdrag.tx+dx;FZ.ty=fdrag.ty+dy;applyFZ(false);}});
-const fUp=e=>{fpts.delete(e.pointerId);if(fpts.size<2)fpinch=null;if(fpts.size===0){if(fdrag&&!fdrag.moved&&fdrag.onMosaic)clickCell(e);fdrag=null;}};
+  else if(fdrag){const dx=e.clientX-fdrag.x,dy=e.clientY-fdrag.y;if(Math.hypot(dx,dy)>4)fdrag.moved=true;
+    if(fdrag.head&&fdrag.moved){const u=fitted.cssCell*FZ.z*(lastDraw?lastDraw.cols:F.cols);fdrag.head.pos={x:fdrag.pos0.x+dx/u,y:fdrag.pos0.y+dy/u};if(!dragDrawPending){dragDrawPending=true;requestAnimationFrame(()=>{dragDrawPending=false;drawMosaic();});}}
+    else{FZ.tx=fdrag.tx+dx;FZ.ty=fdrag.ty+dy;applyFZ(false);}}});
+const fUp=e=>{fpts.delete(e.pointerId);if(fpts.size<2)fpinch=null;if(fpts.size===0){if(fdrag&&!fdrag.moved&&fdrag.onMosaic)clickCell(e);fdrag=null;mosaic.style.cursor='grab';}};
 face.addEventListener('pointerup',fUp);face.addEventListener('pointercancel',fUp);
 face.addEventListener('dblclick',e=>{fzAt(Math.abs(FZ.z-1)>0.05?1:2.5,e.clientX,e.clientY,true);if(Math.abs(FZ.z-1)<0.05){FZ.tx=0;FZ.ty=0;applyFZ(true);}});
-function clickCell(e){
-  if(!lastDraw||!pool||!lastSample)return;const r=mosaic.getBoundingClientRect();const{cell,k,gc,cols,rows}=lastDraw;
-  const px=(e.clientX-r.left)/r.width*mosaic.width/cell,py=(e.clientY-r.top)/r.height*mosaic.height/cell;
-  const fx=Math.floor(px/(cols+gc)),fy=Math.floor(py/(rows+gc)),cx=Math.floor(px-fx*(cols+gc)),cy=Math.floor(py-fy*(rows+gc));
-  if(cx>=cols||cy>=rows)return;const item=lastSample.items[fy*k+fx];if(!item||!item.face.assign)return;
-  const j=item.face.assign[cy*cols+cx];if(j>=0&&pool.list[j]){const cw=r.width/mosaic.width*cell,ch=r.height/mosaic.height*cell;openLB(pool.list[j].id,{left:r.left+(fx*(cols+gc)+cx)*cw,top:r.top+(fy*(rows+gc)+cy)*ch,width:cw,height:ch});}
-}
+function clickCell(e){const hit=faceAt(e.clientX,e.clientY);if(!hit||!pool||!hit.item.face.assign)return;const{cols}=lastDraw;
+  const j=hit.item.face.assign[hit.cy*cols+hit.cx];if(j>=0&&pool.list[j]){const r=mosaic.getBoundingClientRect(),c=hit.cellCss,x=hit.item.face.pos.x*cols,y=hit.item.face.pos.y*cols;
+    openLB(pool.list[j].id,{left:r.left+(x-lastDraw.minX+hit.cx)*c,top:r.top+(y-lastDraw.minY+hit.cy)*c,width:c,height:c});}}
+$('#arrangeBtn').addEventListener('click',arrangeFaces);
 $('#savePng').addEventListener('click',()=>{try{mosaic.toBlob(b=>{if(!b)throw 0;const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='news-face.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);},'image/png');}catch(e){faceMsg('Cannot export: some photos blocked cross-origin access.');setTimeout(()=>faceMsg(''),3000);}});
 
 /* ------------------------------------------------------------------ boot */
