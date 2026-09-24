@@ -19,6 +19,7 @@ class ControlServer(private val app: AppState, port: Int) : NanoHTTPD(port) {
                 uri == "/set" -> { session.parms.forEach { (k, v) -> app.applyParam(k, v) }; json(state()) }
                 uri == "/record" -> { val eng = app.engine; if (session.parms["on"] == "1") eng.startRecording() else eng.stopRecording(); json(state()) }
                 uri == "/arrange" -> { app.engine.arrange(); json(state()) }
+                uri == "/still" -> { if (session.parms["off"] == "1") { app.still.value = null; app.engine.reset() } else app.useStill(session.parms["url"]); json(state()) }
                 uri == "/snapshot.jpg" -> {
                     val bmp = app.engine.latestBitmap() ?: return newFixedLengthResponse(Response.Status.NO_CONTENT, "text/plain", "")
                     val small = if (bmp.width > 540) Bitmap.createScaledBitmap(bmp, 540, bmp.height * 540 / bmp.width, true) else bmp
@@ -40,6 +41,9 @@ class ControlServer(private val app: AppState, port: Int) : NanoHTTPD(port) {
             .put("match", f.match).put("variety", f.variety).put("stability", f.stability).put("fps", f.fps).put("freeze", f.freeze)
             .put("ageH", s.ageH).put("minSat", s.minSat).put("lightMin", s.lightMin).put("lightMax", s.lightMax).put("max", s.max).put("sort", s.sort)
             .put("photos", app.photos.value.size).put("pool", eng.poolSize).put("actualFps", eng.measuredFps).put("recording", eng.isRecording).put("recSeconds", eng.recordingSeconds)
+            .put("headScale", f.headScale).put("extent", f.extent).put("anchor", f.anchor)
+            .put("autoRes", f.autoRes).put("nearFrac", f.nearFrac).put("farFrac", f.farFrac).put("colsMin", f.colsMin).put("colsMax", f.colsMax).put("faceFrac", eng.faceFrac).put("colsInUse", eng.colsInUse)
+            .put("still", app.still.value != null).put("imu", f.imu).put("imuRange", f.imuRange).put("imuSatMin", f.imuSatMin).put("imuSatMax", f.imuSatMax).put("roll", eng.roll).put("satInUse", eng.satInUse)
     }
 
     companion object {
@@ -58,6 +62,7 @@ input[type=range]{width:100%;accent-color:#0a84ff}select,button{font:inherit;col
 img{width:100%;border-radius:12px;background:#000;display:block}.st{color:#8e8ea0;font-size:12px;margin-top:8px}label.ck{display:flex;gap:8px;align-items:center;margin:6px 0}@media(max-width:700px){.wrap{grid-template-columns:1fr}}</style></head><body><div class="wrap"><div>
 <h1>News Faces · phone control</h1>
 <div class="row"><button id="rec">● Record</button><button onclick="fetch('/arrange')">Arrange heads</button><label class="ck"><input type="checkbox" id="freeze"> Freeze</label></div>
+<div class="row" style="margin-top:8px"><span style="color:#8e8ea0;font-size:12px">Source</span><button onclick="fetch('/still')">Random news photo</button><button onclick="fetch('/still?off=1')">Camera</button></div>
 <div class="row" style="margin-top:8px"><span style="color:#8e8ea0;font-size:12px">Preset</span><button onclick="set('preset','Frame')">Frame</button><button onclick="set('preset','Head')">Head</button><button onclick="set('preset','Heads')">Heads</button></div>
 <h2>Pixels</h2>
 <div class="c"><label>Density (cells across) <output id="o-cols"></output></label><input type="range" id="cols" min="4" max="200" step="1"></div>
@@ -73,6 +78,23 @@ img{width:100%;border-radius:12px;background:#000;display:block}.st{color:#8e8ea
 <div class="c"><label>Match by</label><select id="match"><option value="avg">Average colour</option><option value="vivid">Most vivid colour</option></select></div>
 <div class="c"><label>Variety <output id="o-variety"></output></label><input type="range" id="variety" min="0" max="1" step="0.01"></div>
 <div class="c"><label>Stability <output id="o-stability"></output></label><input type="range" id="stability" min="0" max="1" step="0.01"></div>
+<h2>Head mode</h2>
+<div class="c"><label>Head size (also two-finger pinch on the phone) <output id="o-headScale"></output></label><input type="range" id="headScale" min="0.2" max="4" step="0.02"></div>
+<div class="c"><label>Outline extent</label><select id="extent"><option value="face">Face only</option><option value="head">Head (hair to chin)</option><option value="neck">Head + neck</option><option value="bust">Head + shoulders</option></select></div>
+<div class="c"><label>Anchor on screen</label><select id="anchor"><option value="center">Centre</option><option value="top">Top</option><option value="bottom">Bottom</option></select></div>
+<h2>Resolution follows distance</h2>
+<label class="ck"><input type="checkbox" id="autoRes"> Auto: near face → coarse, far face → fine</label>
+<div class="c"><label>Near threshold (face height / frame) <output id="o-nearFrac"></output></label><input type="range" id="nearFrac" min="0.1" max="0.9" step="0.01"></div>
+<div class="c"><label>Far threshold <output id="o-farFrac"></output></label><input type="range" id="farFrac" min="0.03" max="0.6" step="0.01"></div>
+<div class="c"><label>Cells when near <output id="o-colsMin"></output></label><input type="range" id="colsMin" min="2" max="240" step="1"></div>
+<div class="c"><label>Cells when far <output id="o-colsMax"></output></label><input type="range" id="colsMax" min="2" max="240" step="1"></div>
+<div class="st" id="resLive"></div>
+<h2>Tilt → saturation (IMU)</h2>
+<label class="ck"><input type="checkbox" id="imu"> Left/right tilt of the phone drives saturation</label>
+<div class="c"><label>Tilt range (°) <output id="o-imuRange"></output></label><input type="range" id="imuRange" min="5" max="90" step="1"></div>
+<div class="c"><label>Saturation when tilted left <output id="o-imuSatMin"></output></label><input type="range" id="imuSatMin" min="0" max="3" step="0.02"></div>
+<div class="c"><label>Saturation when tilted right <output id="o-imuSatMax"></output></label><input type="range" id="imuSatMax" min="0" max="3" step="0.02"></div>
+<div class="st" id="imuLive"></div>
 <h2>Head tracking</h2>
 <label class="ck"><input type="checkbox" id="track"> Track heads (off = whole frame becomes pixels)</label>
 <div class="c"><label>Outline</label><select id="outline"><option value="head">Head shape</option><option value="oval">Oval</option><option value="none">Full crop</option></select></div>
@@ -86,9 +108,10 @@ img{width:100%;border-radius:12px;background:#000;display:block}.st{color:#8e8ea
 <div class="c"><label>Max photos <output id="o-max"></output></label><input type="range" id="max" min="50" max="4000" step="50"></div>
 </div><div><img id="snap" alt="live preview"><div class="st" id="st"></div></div></div>
 <script>
-const ids=['cols','gap','fps','hue','sat','bright','contrast','tintAmt','variety','stability','pad','ageH','minSat','lightMin','lightMax','max'];
-const cks=['mirror','freeze','track','multi'];const sels=['match','outline'];let busy=0;
-function show(s){for(const k of ids){const el=document.getElementById(k);if(document.activeElement!==el)el.value=s[k];const o=document.getElementById('o-'+k);if(o)o.textContent=(+s[k]).toFixed(k==='cols'||k==='fps'||k==='ageH'||k==='max'||k==='hue'?0:2);}
+const ids=['cols','gap','fps','hue','sat','bright','contrast','tintAmt','variety','stability','pad','ageH','minSat','lightMin','lightMax','max','headScale','nearFrac','farFrac','colsMin','colsMax','imuRange','imuSatMin','imuSatMax'];
+const cks=['mirror','freeze','track','multi','autoRes','imu'];const sels=['match','outline','extent','anchor'];let busy=0;
+function show(s){for(const k of ids){const el=document.getElementById(k);if(document.activeElement!==el)el.value=s[k];const o=document.getElementById('o-'+k);if(o)o.textContent=(+s[k]).toFixed(['cols','fps','ageH','max','hue','colsMin','colsMax','imuRange'].includes(k)?0:2);}
+document.getElementById('resLive').textContent='live: face height '+(s.faceFrac*100).toFixed(0)+'% of frame → '+s.colsInUse+' cells across';document.getElementById('imuLive').textContent='live: roll '+s.roll.toFixed(1)+'° → saturation ×'+s.satInUse.toFixed(2);
 for(const k of cks)document.getElementById(k).checked=!!s[k];for(const k of sels)document.getElementById(k).value=s[k];document.getElementById('tint').value=s.tint;
 const r=document.getElementById('rec');r.className=s.recording?'on':'';r.textContent=s.recording?'■ Stop '+Math.floor(s.recSeconds/60).toString().padStart(2,'0')+':'+(s.recSeconds%60).toString().padStart(2,'0'):'● Record';
 document.getElementById('st').textContent=s.photos+' photos · pool '+s.pool+' · '+s.actualFps.toFixed(1)+' fps';}

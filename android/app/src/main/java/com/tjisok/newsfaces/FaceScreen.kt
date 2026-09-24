@@ -76,7 +76,7 @@ fun FaceScreen(zoomRequest: Int) {
     val hud by app.hud.collectAsStateWithLifecycle()
     val presetLabel by app.presetLabel.collectAsStateWithLifecycle()
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
-    var stillImage by remember { mutableStateOf<Bitmap?>(null) }
+    val stillImage by app.still.collectAsStateWithLifecycle()
     var showUrl by remember { mutableStateOf(true) }
     var hover by remember { mutableStateOf<Hover?>(null) }
     var canvasSize by remember { mutableStateOf(IntSize.Zero) }
@@ -85,12 +85,23 @@ fun FaceScreen(zoomRequest: Int) {
     val scope = rememberCoroutineScope()
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) scope.launch { val bmp = withContext(Dispatchers.IO) { app.loadBitmap(uri.toString(), 1280) }; if (bmp != null) { eng.reset(); stillImage = bmp; withContext(Dispatchers.Default) { eng.process(bmp, still = true) } } }
+        if (uri != null) app.useStill(uri.toString())
     }
     LaunchedEffect(Unit) { if (!granted) permission.launch(Manifest.permission.CAMERA); delay(7000); showUrl = false }
     LaunchedEffect(fs, stillImage) { stillImage?.let { b -> withContext(Dispatchers.Default) { eng.process(b, still = true) } } }
     var lastReq by remember { mutableIntStateOf(zoomRequest) }
     LaunchedEffect(zoomRequest) { val d = zoomRequest - lastReq; lastReq = zoomRequest; if (d != 0) app.updateFace { it.copy(cols = (it.cols / if (d > 0) 1.25f else 0.8f).roundToInt().coerceIn(2, 240)) } }
+    // IMU: left/right tilt (roll) → saturation. Gravity vector in portrait: x lateral, y vertical.
+    DisposableEffect(fs.imu) {
+        val sm = ctx.getSystemService(android.content.Context.SENSOR_SERVICE) as android.hardware.SensorManager
+        val sensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GRAVITY) ?: sm.getDefaultSensor(android.hardware.Sensor.TYPE_ACCELEROMETER)
+        val listener = object : android.hardware.SensorEventListener {
+            override fun onSensorChanged(e: android.hardware.SensorEvent) { val r = Math.toDegrees(kotlin.math.atan2(-e.values[0].toDouble(), e.values[1].toDouble())).toFloat(); eng.roll += (r - eng.roll) * 0.25f }
+            override fun onAccuracyChanged(s: android.hardware.Sensor?, a: Int) {}
+        }
+        if (fs.imu && sensor != null) sm.registerListener(listener, sensor, android.hardware.SensorManager.SENSOR_DELAY_GAME)
+        onDispose { sm.unregisterListener(listener) }
+    }
     // keep the screen on while the mosaic runs
     DisposableEffect(Unit) { val w = (ctx as? Activity)?.window; w?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); onDispose { w?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) } }
 
@@ -102,10 +113,10 @@ fun FaceScreen(zoomRequest: Int) {
             .pointerInput(Unit) {
                 awaitEachGesture {
                     val down = awaitFirstDown(requireUnconsumed = false); down.consume()
-                    val t0 = System.currentTimeMillis(); val startCols = app.settings.value.face.cols
+                    val t0 = System.currentTimeMillis(); val startCols = app.settings.value.face.cols; val startScale = app.settings.value.face.headScale; val trackMode = app.settings.value.face.track
                     var d0 = -1f; var moved = false; var longPressed = false; var lastCols = startCols; var prevSingle: Offset? = down.position
                     var swipeStartX = Float.NaN; var swiped = false
-                    hover = hoverAt(eng.frame.value, down.position, size, zoom, pan, app.settings.value.face.track)
+                    hover = hoverAt(eng.frame.value, down.position, size, zoom, pan, false)
                     while (true) {
                         val remaining = 600 - (System.currentTimeMillis() - t0)
                         val ev = if (!moved && !longPressed && remaining > 0) withTimeoutOrNull(remaining) { awaitPointerEvent() } else awaitPointerEvent()
@@ -119,12 +130,14 @@ fun FaceScreen(zoomRequest: Int) {
                         } else if (swiped) { ev.changes.forEach { it.consume() } }
                         else if (pressed.size >= 2) {
                             val d = (pressed[0].position - pressed[1].position).getDistance()
-                            if (d0 < 0f) d0 = d else if (d > 0f) { val target = (startCols / (d / d0)).roundToInt().coerceIn(2, 240); if (target != lastCols) { lastCols = target; app.updateFace { it.copy(cols = target) } } }
+                            if (d0 < 0f) d0 = d
+                            else if (d > 0f && trackMode) { val sc = (startScale * d / d0).coerceIn(0.2f, 5f); if (abs(sc - app.settings.value.face.headScale) > 0.01f) app.updateFace { it.copy(headScale = sc) } }
+                            else if (d > 0f) { val target = (startCols / (d / d0)).roundToInt().coerceIn(2, 240); if (target != lastCols) { lastCols = target; app.updateFace { it.copy(cols = target) } } }
                             moved = true; hover = null; prevSingle = null; ev.changes.forEach { it.consume() }
                         } else if (pressed.size == 1) {
                             d0 = -1f; val pos = pressed[0].position
                             if ((pos - down.position).getDistance() > 10f) moved = true
-                            if (app.settings.value.face.track && moved) { prevSingle?.let { pan += pos - it }; hover = null } else if (!longPressed) hover = hoverAt(eng.frame.value, pos, size, zoom, pan, app.settings.value.face.track)
+                            if (!longPressed) hover = hoverAt(eng.frame.value, pos, size, zoom, pan, false)
                             prevSingle = pos; pressed[0].consume()
                         }
                         if (ev.changes.none { it.pressed }) break
@@ -137,7 +150,6 @@ fun FaceScreen(zoomRequest: Int) {
             val bmp = f.bitmap; val s = size.width / bmp.width
             drawIntoCanvas { c ->
                 val nc = c.nativeCanvas; nc.save()
-                if (fs.track) { nc.translate(size.width / 2f + pan.x, size.height / 2f + pan.y); nc.scale(zoom, zoom); nc.translate(-size.width / 2f, -size.height / 2f) }
                 nc.drawBitmap(bmp, null, RectF(0f, 0f, bmp.width * s, bmp.height * s), bmpPaint)
                 nc.restore()
                 hover?.let { h ->
@@ -168,7 +180,7 @@ fun FaceScreen(zoomRequest: Int) {
             OutlinedButton(onClick = { app.updateFace { it.copy(track = !it.track) }; eng.reset(); zoom = 1f; pan = Offset.Zero }) { Text(if (fs.track) "Heads" else "Frame", color = Fg) }
             if (fs.track) OutlinedButton(onClick = { eng.arrange(); zoom = 1f; pan = Offset.Zero }) { Text("Arrange", color = Fg) }
             OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text("Photo", color = Fg) }
-            if (stillImage != null) OutlinedButton(onClick = { stillImage = null; eng.reset() }) { Text("Camera", color = Fg) }
+            if (stillImage != null) OutlinedButton(onClick = { app.still.value = null; eng.reset() }) { Text("Camera", color = Fg) }
             else if (!granted) OutlinedButton(onClick = { permission.launch(Manifest.permission.CAMERA) }) { Text("Allow camera", color = Fg) }
         }
     }

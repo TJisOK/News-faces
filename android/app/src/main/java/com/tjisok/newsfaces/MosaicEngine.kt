@@ -80,6 +80,9 @@ class MosaicEngine(private val app: AppState) {
     private val mlExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
     @Volatile private var mlBusy = false; private var lastMl = 0L
     @Volatile private var latestMask: Bitmap? = null
+    // live values shown on the web debug panel
+    @Volatile var faceFrac = 0f; @Volatile var colsInUse = 0; private var autoCols = -1f
+    @Volatile var roll = 0f; @Volatile var satInUse = 1f
     /** output size in px (the screen); set by the screen composable */
     @Volatile var targetW = 1080; @Volatile var targetH = 2400
     private var buffers = arrayOfNulls<Bitmap>(2); private var bufIdx = 0
@@ -130,18 +133,34 @@ class MosaicEngine(private val app: AppState) {
             val U = Matrix(); if (!fs.track && rot != 0) { U.setRotate(rot.toFloat()); when (rot) { 90 -> U.postTranslate(upW.toFloat(), 0f); 180 -> U.postTranslate(upW.toFloat(), upH.toFloat()); 270 -> U.postTranslate(0f, upH.toFloat()) } }
             val P = buildPool(fs)
             if (P.list.isEmpty()) { message.value = "Waiting for colour analysis…"; return }
-            val cols = fs.cols.coerceIn(2, 240); val rows = rowsFor(cols, fs.track)
+            if (fs.track && still) mlUpdate(bmp, true, fs) // stills: detect first so the distance-based resolution sees the face
+            // resolution follows distance in head mode: face height as a fraction of the frame → cells across, smoothed and stepped by 2
+            var cols = fs.cols.coerceIn(2, 240)
+            if (fs.track) {
+                val face = tracks.filter { !it.fallback }.maxByOrNull { it.box.height() }
+                if (face != null) faceFrac = face.box.height() / bmp.height
+                if (fs.autoRes && face != null) {
+                    val k = ((fs.nearFrac - faceFrac) / (fs.nearFrac - fs.farFrac).coerceAtLeast(0.01f)).coerceIn(0f, 1f)
+                    val target = fs.colsMin + (fs.colsMax - fs.colsMin) * k
+                    autoCols = if (autoCols < 0f) target else autoCols + (target - autoCols) * (if (still) 1f else 0.12f)
+                    val stepped = (autoCols / 2f).roundToInt() * 2
+                    cols = (if (colsInUse in 2..240 && kotlin.math.abs(stepped - colsInUse) < 2) colsInUse else stepped).coerceIn(2, 240)
+                }
+            } else autoCols = -1f
+            colsInUse = cols
+            val fsEff = if (fs.imu) { val k = ((roll / fs.imuRange + 1f) / 2f).coerceIn(0f, 1f); fs.copy(sat = fs.imuSatMin + (fs.imuSatMax - fs.imuSatMin) * k) } else fs
+            satInUse = fsEff.sat
+            val rows = rowsFor(cols, fs.track)
             val heads = ArrayList<Pair<FaceTrack, Triple<IntArray, ByteArray?, PointF>>>()
             if (fs.track) {
-                if (still) mlUpdate(bmp, true, fs)
-                else if (!mlBusy && now - lastMl >= 80) { mlBusy = true; lastMl = now; mlExecutor.execute { try { mlUpdate(bmp, false, fs) } catch (_: Exception) {} finally { mlBusy = false } } }
+                if (!still && !mlBusy && now - lastMl >= 80) { mlBusy = true; lastMl = now; mlExecutor.execute { try { mlUpdate(bmp, false, fs) } catch (_: Exception) {} finally { mlBusy = false } } }
                 val snapshot = tracks; val maskBmp = latestMask
                 for (t in snapshot) {
                     val pos = t.pos ?: continue
                     val crop = cropRect(t.box, fs.pad)
                     val px = sample(bmp, crop, cols, rows, fs.mirror, null)
                     val alpha = if (maskBmp != null && fs.outline == "head") refineMask(sample(maskBmp, crop, cols, rows, fs.mirror, Paint().apply { color = Color.WHITE }), t, cols, rows, !still, crop) else null
-                    heads.add(t to Triple(match(px, alpha, t, cols, rows, fs, P), alpha, PointF(pos.x, pos.y)))
+                    heads.add(t to Triple(match(px, alpha, t, cols, rows, fsEff, P), alpha, PointF(pos.x, pos.y)))
                 }
             } else {
                 // whole frame → pixels: centre-crop the camera image to the screen aspect
@@ -150,7 +169,7 @@ class MosaicEngine(private val app: AppState) {
                 if (tracks.isEmpty() || tracks[0].id != -1) tracks = listOf(FaceTrack(-1, crop, now, fallback = true).also { it.pos = PointF(0f, 0f) })
                 val t = tracks[0]; t.box = crop
                 val px = sample(bmp, crop, cols, rows, fs.mirror, null, U)
-                heads.add(t to Triple(match(px, null, t, cols, rows, fs, P), null, PointF(0f, 0f)))
+                heads.add(t to Triple(match(px, null, t, cols, rows, fsEff, P), null, PointF(0f, 0f)))
                 message.value = ""
             }
             val tB = System.nanoTime()
@@ -211,9 +230,17 @@ class MosaicEngine(private val app: AppState) {
 
     private fun refineMask(px: IntArray, t: FaceTrack, cols: Int, rows: Int, live: Boolean, crop: RectF? = null): ByteArray {
         val n = cols * rows; val cov = FloatArray(n) { (px[it] ushr 24).toFloat() }
-        if (crop != null && !t.fallback) { // the person mask includes the shoulders: keep head and neck, fade out below the chin
-            val chin = (t.box.bottom - crop.top) / crop.height() * rows; val neck = t.box.height() / crop.height() * rows * 0.55f
-            for (y in 0 until rows) { val k = ((y - chin) / neck).coerceIn(0f, 1f); if (k > 0f) { val f = 1f - k * k; for (x in 0 until cols) cov[y * cols + x] *= f } }
+        val extent = app.settings.value.face.extent
+        if (crop != null && !t.fallback && extent != "bust") { // how far down the outline reaches
+            val bh = t.box.height() / crop.height() * rows; val chin = (t.box.bottom - crop.top) / crop.height() * rows
+            if (extent == "face") { // ignore the person mask: an ellipse around the face box
+                val bw = t.box.width() / crop.width() * cols; var bx = (t.box.centerX() - crop.left) / crop.width() * cols; if (app.settings.value.face.mirror) bx = cols - bx
+                val by = (t.box.centerY() - crop.top) / crop.height() * rows; val rx = bw * 0.62f; val ry = bh * 0.72f
+                for (y in 0 until rows) for (x in 0 until cols) { val dx = (x + .5f - bx) / rx; val dy = (y + .5f - by) / ry; cov[y * cols + x] = if (dx * dx + dy * dy <= 1f) 255f else 0f }
+            } else {
+                val start = chin + bh * (if (extent == "head") 0.04f else 0.28f); val fade = bh * (if (extent == "head") 0.12f else 0.22f)
+                for (y in 0 until rows) { val k = ((y - start) / fade).coerceIn(0f, 1f); if (k > 0f) { val f = 1f - k * k; for (x in 0 until cols) cov[y * cols + x] *= f } }
+            }
         }
         val cx = (cols - 1) / 2f; val cy = (rows - 1) / 2f; val rx = cols * 0.6f; val ry = rows * 0.6f
         for (i in 0 until n) { val x = i % cols; val y = i / cols; val dx = (x - cx) / rx; val dy = (y - cy) / ry; if (dx * dx + dy * dy > 1f) cov[i] = 0f }
@@ -300,8 +327,9 @@ class MosaicEngine(private val app: AppState) {
         var minX = Float.MAX_VALUE; var minY = Float.MAX_VALUE; var maxX = -Float.MAX_VALUE; var maxY = -Float.MAX_VALUE
         for ((_, h) in heads) { val x = h.third.x * cols; val y = h.third.y * cols; minX = min(minX, x); minY = min(minY, y); maxX = max(maxX, x + cols); maxY = max(maxY, y + rows) }
         val tc = maxX - minX; val tr = maxY - minY
-        val cell = if (!fs.track) W.toFloat() / cols else if (heads.size == 1) max(W * 0.94f / tc, H * 0.94f / tr) else min(W * 0.94f / tc, H * 0.94f / tr)
-        val ox = (W - tc * cell) / 2; val oy = (H - tr * cell) / 2
+        val cell = if (!fs.track) W.toFloat() / cols else (if (heads.size == 1) H * 0.94f / tr else min(W * 0.94f / tc, H * 0.94f / tr)) * fs.headScale
+        val ox = (W - tc * cell) / 2
+        val oy = if (!fs.track) (H - tr * cell) / 2 else when (fs.anchor) { "top" -> H * 0.02f; "bottom" -> H * 0.98f - tr * cell; else -> (H - tr * cell) / 2 }
         val g = cell * fs.gap; val inner = cell - g; val sz = inner.roundToInt().coerceAtLeast(1); val fastPath = sz <= 96
         val layouts = ArrayList<HeadLayout>(); val soft = ArrayList<Triple<Photo, RectF, Float>>()
         for ((t, h) in heads) {

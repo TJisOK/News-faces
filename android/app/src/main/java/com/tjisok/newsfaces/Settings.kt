@@ -8,7 +8,13 @@ data class FaceSettings(
     val outline: String = "head", val multi: Boolean = false, val mirror: Boolean = true,
     val hue: Float = 0f, val sat: Float = 1f, val bright: Float = 0f, val contrast: Float = 1f,
     val tint: Int = 0xFFFF7A3D.toInt(), val tintAmt: Float = 0f, val match: String = "avg",
-    val variety: Float = 0.25f, val stability: Float = 0.5f, val fps: Int = 30, val freeze: Boolean = false
+    val variety: Float = 0.25f, val stability: Float = 0.5f, val fps: Int = 30, val freeze: Boolean = false,
+    // head mode interaction
+    val headScale: Float = 1f, val extent: String = "neck", val anchor: String = "center",
+    // resolution follows distance: face height as a fraction of the frame; near → colsMin, far → colsMax
+    val autoRes: Boolean = true, val nearFrac: Float = 0.45f, val farFrac: Float = 0.12f, val colsMin: Int = 20, val colsMax: Int = 120,
+    // IMU: left/right tilt drives saturation
+    val imu: Boolean = false, val imuRange: Float = 45f, val imuSatMin: Float = 0.2f, val imuSatMax: Float = 2f
 )
 
 data class Settings(
@@ -30,7 +36,9 @@ data class Settings(
             .put("disabled", disabledSources.joinToString(","))
             .put("face", JSONObject().put("cols", f.cols).put("pad", f.pad).put("gap", f.gap).put("outline", f.outline).put("multi", f.multi).put("track", f.track)
                 .put("mirror", f.mirror).put("hue", f.hue).put("sat", f.sat).put("bright", f.bright).put("contrast", f.contrast)
-                .put("tint", f.tint).put("tintAmt", f.tintAmt).put("match", f.match).put("variety", f.variety).put("stability", f.stability).put("fps", f.fps))
+                .put("tint", f.tint).put("tintAmt", f.tintAmt).put("match", f.match).put("variety", f.variety).put("stability", f.stability).put("fps", f.fps)
+                .put("headScale", f.headScale).put("extent", f.extent).put("anchor", f.anchor).put("autoRes", f.autoRes).put("nearFrac", f.nearFrac).put("farFrac", f.farFrac).put("colsMin", f.colsMin).put("colsMax", f.colsMax)
+                .put("imu", f.imu).put("imuRange", f.imuRange).put("imuSatMin", f.imuSatMin).put("imuSatMax", f.imuSatMax))
         return o.toString()
     }
 
@@ -54,7 +62,11 @@ data class Settings(
                         bright = fo.optDouble("bright", fd.bright.toDouble()).toFloat(), contrast = fo.optDouble("contrast", fd.contrast.toDouble()).toFloat(),
                         tint = fo.optInt("tint", fd.tint), tintAmt = fo.optDouble("tintAmt", fd.tintAmt.toDouble()).toFloat(), match = fo.optString("match", fd.match),
                         variety = fo.optDouble("variety", fd.variety.toDouble()).toFloat(), stability = fo.optDouble("stability", fd.stability.toDouble()).toFloat(),
-                        fps = fo.optInt("fps", fd.fps))
+                        fps = fo.optInt("fps", fd.fps),
+                        headScale = fo.optDouble("headScale", fd.headScale.toDouble()).toFloat(), extent = fo.optString("extent", fd.extent), anchor = fo.optString("anchor", fd.anchor),
+                        autoRes = fo.optBoolean("autoRes", fd.autoRes), nearFrac = fo.optDouble("nearFrac", fd.nearFrac.toDouble()).toFloat(), farFrac = fo.optDouble("farFrac", fd.farFrac.toDouble()).toFloat(),
+                        colsMin = fo.optInt("colsMin", fd.colsMin), colsMax = fo.optInt("colsMax", fd.colsMax),
+                        imu = fo.optBoolean("imu", fd.imu), imuRange = fo.optDouble("imuRange", fd.imuRange.toDouble()).toFloat(), imuSatMin = fo.optDouble("imuSatMin", fd.imuSatMin.toDouble()).toFloat(), imuSatMax = fo.optDouble("imuSatMax", fd.imuSatMax.toDouble()).toFloat())
                 )
             } catch (e: Exception) { Settings() }
         }

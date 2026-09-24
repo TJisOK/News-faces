@@ -43,6 +43,13 @@ class AppState(val ctx: Context) {
     val mode = MutableStateFlow("gallery")
     val viewer = MutableStateFlow<Photo?>(null)
     val hud = MutableStateFlow(false)           // Face mode: show controls (long-press toggles)
+    val still = MutableStateFlow<Bitmap?>(null)  // a still image replaces the camera as the mosaic source
+    /** load a still from a URL/uri (or a random news portrait when url is null) and use it as the source */
+    fun useStill(url: String?) = scope.launch {
+        val src = url ?: run { val list = visibleList().ifEmpty { photos.value }; if (list.isEmpty()) return@launch; list[(Math.random() * list.size).toInt()].img }
+        val bmp = try { loadBitmap(src, 1280) } catch (_: Exception) { null } ?: return@launch
+        engine.reset(); still.value = bmp; engine.process(bmp, still = true)
+    }
     val engine: MosaicEngine by lazy { MosaicEngine(this) }
     var server: ControlServer? = null; private set
     var controlUrl: String = ""; private set
@@ -93,6 +100,18 @@ class AppState(val ctx: Context) {
             "lightMax" -> f?.let { x -> update { it.copy(lightMax = x) } }
             "max" -> f?.let { x -> update { it.copy(max = x.roundToInt()) } }
             "sort" -> update { it.copy(sort = v) }
+            "headScale" -> f?.let { x -> updateFace { it.copy(headScale = x.coerceIn(0.2f, 5f)) } }
+            "extent" -> updateFace { it.copy(extent = v) }
+            "anchor" -> updateFace { it.copy(anchor = v) }
+            "autoRes" -> updateFace { it.copy(autoRes = b) }
+            "nearFrac" -> f?.let { x -> updateFace { it.copy(nearFrac = x) } }
+            "farFrac" -> f?.let { x -> updateFace { it.copy(farFrac = x) } }
+            "colsMin" -> f?.let { x -> updateFace { it.copy(colsMin = x.roundToInt().coerceIn(2, 240)) } }
+            "colsMax" -> f?.let { x -> updateFace { it.copy(colsMax = x.roundToInt().coerceIn(2, 240)) } }
+            "imu" -> updateFace { it.copy(imu = b) }
+            "imuRange" -> f?.let { x -> updateFace { it.copy(imuRange = x.coerceIn(5f, 90f)) } }
+            "imuSatMin" -> f?.let { x -> updateFace { it.copy(imuSatMin = x) } }
+            "imuSatMax" -> f?.let { x -> updateFace { it.copy(imuSatMax = x) } }
             "preset" -> { val i = PRESETS.indexOfFirst { it.equals(v, ignoreCase = true) }; if (i >= 0) applyPreset(i) else v.toIntOrNull()?.let { applyPreset(it) } }
         }
     }
