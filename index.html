@@ -385,21 +385,25 @@ function parseJSON(text){
 }
 async function fetchWithTimeout(url,ms){const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);try{return await fetch(url,{signal:c.signal});}finally{clearTimeout(t);}}
 const feedState={}; // id -> 'loading'|'ok'|'fail'
-const rateLimitedUntil={}; // proxy name -> timestamp
+const rateLimitedUntil={},proxyHealth={}; // proxy name -> timestamp / {fails,t}: a proxy that failed twice recently is skipped for 10 minutes
 async function fetchFeed(feed){
   feedState[feed.id]='loading'; setStatus();
   let list=PROXIES.filter(p=>!('only'in p)||p.only);
-  if(feed.xml) list=[...list.filter(p=>p.kind==='xml'),...list.filter(p=>p.kind!=='xml')];
+  if(feed.xml&&isLocalServer) list=[...list.filter(p=>p.kind==='xml'),...list.filter(p=>p.kind!=='xml')];
+  const dead=p=>{const h=proxyHealth[p.name];return h&&h.fails>=2&&Date.now()-h.t<600000;};
+  list=[...list.filter(p=>!dead(p)),...list.filter(dead)]; // healthy proxies first, dead ones only as a last resort
   let items=null,limited=false;
   for(const p of list){
     if((rateLimitedUntil[p.name]||0)>Date.now()){limited=true;continue;}
+    if(dead(p)&&items===null&&list.some(q=>!dead(q))&&list.indexOf(p)>0)continue;
     try{
-      const r=await fetchWithTimeout(p.url(feed.url),12000);
+      const r=await fetchWithTimeout(p.url(feed.url),8000);
       if(r.status===429){rateLimitedUntil[p.name]=Date.now()+60000;limited=true;throw new Error(429);}
       if(!r.ok) throw new Error(r.status);
       const txt=await r.text(); items=p.kind==='json'?parseJSON(txt):parseXML(txt);
-      if(items.length){feed.via=p.name;break;}
-    }catch(e){ items=null; }
+      if(items.length){feed.via=p.name;proxyHealth[p.name]={fails:0,t:Date.now()};break;}
+      throw new Error('empty');
+    }catch(e){ items=null; if(String(e.message)!=='429'){const h=proxyHealth[p.name]||{fails:0,t:0};proxyHealth[p.name]={fails:h.fails+1,t:Date.now()};} }
   }
   if(!items){feedState[feed.id]=limited?'limited':'fail';setStatus();return limited?'limited':'fail';}
   const now=Date.now(); let n=0; for(const it of items) if(addPhoto(feed,it,now)) n++;
