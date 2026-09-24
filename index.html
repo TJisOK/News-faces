@@ -308,7 +308,7 @@ function syncSortUI(){$('#s-sort').value=S.sort;$$('#chips button').forEach(b=>b
 const TILE_MIN=2, TILE_MAX=6000; // slider range only; pinch/wheel are unbounded
 const tileToSlider=t=>clamp(Math.log(t/TILE_MIN)/Math.log(TILE_MAX/TILE_MIN),0,1), sliderToTile=v=>TILE_MIN*Math.pow(TILE_MAX/TILE_MIN,v);
 function syncZoomUI(){$('#s-tile').value=tileToSlider(S.tile);const a=tileActual();const W=viewW();const cols=a<W?Math.max(1,Math.round((W+S.gap)/(a+S.gap))):1;$('#o-tile').textContent=`${Math.round(a)}px · ${cols} col${cols>1?'s':''}`;}
-$('#s-tile').addEventListener('input',e=>{S.tile=sliderToTile(+e.target.value);applyCSS();syncZoomUI();saveSettings();});
+$('#s-tile').addEventListener('input',e=>{S.tile=sliderToTile(+e.target.value);S.tileAuto=false;applyCSS();syncZoomUI();saveSettings();});
 $('#s-tile').addEventListener('change',()=>{setTile(snapTile(S.tile),false);});
 
 function buildSources(){
@@ -512,7 +512,7 @@ function drawSpectrum(list){
   list.forEach((p,i)=>{x.fillStyle=p.color?p.color.vivid:'#333';x.fillRect(i*sw,0,Math.ceil(sw)+.5,6);});
 }
 spec.addEventListener('click',e=>{const i=Math.floor(e.offsetX/spec.clientWidth*current.length);const p=current[i];const t=p&&tileOf(p.id);if(t){t.scrollIntoView({block:'center',behavior:'smooth'});t.animate([{outline:'3px solid #fff',outlineOffset:'0px'},{outline:'3px solid transparent',outlineOffset:'6px'}],{duration:900});}});
-addEventListener('resize',()=>{drawSpectrum(current);if(S.tile<viewW()){S.tile=snapTile(tileActual());applyCSS();syncZoomUI();}});
+addEventListener('resize',()=>{drawSpectrum(current);if(S.tileAuto)defaultTile();else if(S.tile<viewW()){S.tile=snapTile(tileActual());applyCSS();syncZoomUI();}});
 
 /* ------------------------------------------------------------ grid zoom */
 // Continuous, unbounded zoom: the tile size in px is the zoom level. Below the container width the
@@ -521,7 +521,7 @@ const tileActual=()=>{if(!grid.firstElementChild)return S.tile;const v=parseFloa
 const viewW=()=>Math.max(1,stage.clientWidth-2*S.gap);
 const TILE_CAP=200000; // browsers stop laying out around 16.7M px; keep well under it
 function snapTile(px){px=clamp(px,0.5,TILE_CAP);const W=viewW();if(px<W){const cols=Math.max(1,Math.round((W+S.gap)/(px+S.gap)));return Math.max(0.5,(W-(cols-1)*S.gap)/cols-0.02);}return px;}
-function setTile(px,animate=true){px=clamp(px,0.5,TILE_CAP);if(Math.abs(px-S.tile)<0.01)return;S.tile=px;saveSettings();const mutate=()=>{applyCSS();syncZoomUI();};if(animate&&S.anim>0)flip(mutate);else mutate();}
+function setTile(px,animate=true){px=clamp(px,0.5,TILE_CAP);if(Math.abs(px-S.tile)<0.01)return;S.tile=px;S.tileAuto=false;saveSettings();const mutate=()=>{applyCSS();syncZoomUI();};if(animate&&S.anim>0)flip(mutate);else mutate();}
 let zoom=null;
 function zoomBegin(cx,cy){if(MODE==='face')return fzBegin(cx,cy);grid.style.transition='none';grid.style.transform='';const r=grid.getBoundingClientRect();zoom={startTile:tileActual(),scale:1,cx,cy,ox:cx-r.left,oy:cy-r.top};grid.style.transformOrigin=`${zoom.ox}px ${zoom.oy}px`;}
 function zoomUpdate(scale){if(MODE==='face')return fzUpdate(scale);if(!zoom)return;zoom.scale=Math.max(1e-4,scale);grid.style.transform=`scale(${zoom.scale})`;}
@@ -530,7 +530,7 @@ function zoomEnd(){
   if(!zoom)return;const z=zoom;zoom=null;
   const newTile=snapTile(z.startTile*z.scale);const stR=stage.getBoundingClientRect();
   const mutate=()=>{
-    grid.style.transition='none';grid.style.transform='';S.tile=newTile;applyCSS();saveSettings();
+    grid.style.transition='none';grid.style.transform='';S.tile=newTile;S.tileAuto=false;applyCSS();saveSettings();
     const actual=tileActual(),ratio=actual/z.startTile;syncZoomUI();
     // keep the pinch focal point under the fingers / cursor
     const g=grid.getBoundingClientRect();const gTop=g.top-stR.top+stage.scrollTop,gLeft=g.left-stR.left+stage.scrollLeft;
@@ -632,7 +632,7 @@ $('#refreshBtn').addEventListener('click',fetchAll);$('#refreshNow').addEventLis
 $('#clearCache').addEventListener('click',()=>{localStorage.removeItem('newsgal.cache.v1');photos=[];byId.clear();analyzed=0;analyzeTotal=0;grid.innerHTML='';render({animate:false});fetchAll();});
 let refreshTimer=0;
 function scheduleRefresh(){clearInterval(refreshTimer);if(S.refreshMin>0)refreshTimer=setInterval(fetchAll,S.refreshMin*6e4);}
-if(matchMedia('(max-width:760px)').matches&&!('collapsed'in JSON.parse(localStorage.getItem('newsgal.settings.v1')||'{}')))S.collapsed=true;
+if(innerWidth>0&&innerWidth<=760&&!('collapsed'in JSON.parse(localStorage.getItem('newsgal.settings.v1')||'{}')))S.collapsed=true;
 
 /* ------------------------------------------------------------ face mosaic */
 const FDEF={cols:48,pad:1.9,gap:0.06,outline:'head',multi:false,mirror:true,pip:true,hue:0,sat:1,bright:0,contrast:1,tint:'#ff7a3d',tintAmt:0,match:'avg',variety:0.25,stability:0.5,fps:12};
@@ -970,7 +970,11 @@ $('#arrangeBtn').addEventListener('click',arrangeFaces);
 $('#savePng').addEventListener('click',()=>{try{mosaic.toBlob(b=>{if(!b)throw 0;const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='news-face.png';a.click();setTimeout(()=>URL.revokeObjectURL(a.href),5000);},'image/png');}catch(e){faceMsg('Cannot export: some photos blocked cross-origin access.');setTimeout(()=>faceMsg(''),3000);}});
 
 /* ------------------------------------------------------------------ boot */
-$('#app').classList.toggle('collapsed',S.collapsed);if(!(S.tile>0)){const W=viewW()||900;S.tile=snapTile((W-4*S.gap)/5);}applyCSS();bindSliders();buildSources();syncZoomUI();
+$('#app').classList.toggle('collapsed',S.collapsed);
+// default zoom = 5 columns. If the viewport has no width yet (pane still opening), keep retrying until it does.
+function defaultTile(){const W=viewW();if(W<100)return false;S.tile=snapTile((W-4*S.gap)/5);S.tileAuto=true;applyCSS();syncZoomUI();return true;}
+if(!(S.tile>1)||S.tileAuto){S.tile=180;if(!defaultTile()){const retry=()=>{if(!defaultTile())requestAnimationFrame(retry);};requestAnimationFrame(retry);}}
+applyCSS();bindSliders();buildSources();syncZoomUI();
 if(isLocalServer)$('#proxyHint').textContent='Feeds are fetched through the local proxy (serve.py).';
 const cacheTs=loadCache();
 if(photos.length){render({animate:false});analyzeAll();updateSourceCounts();}
