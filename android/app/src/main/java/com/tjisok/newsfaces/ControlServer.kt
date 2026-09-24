@@ -43,7 +43,7 @@ class ControlServer(private val app: AppState, port: Int) : NanoHTTPD(port) {
             .put("photos", app.photos.value.size).put("pool", eng.poolSize).put("actualFps", eng.measuredFps).put("recording", eng.isRecording).put("recSeconds", eng.recordingSeconds)
             .put("headScale", f.headScale).put("extent", f.extent).put("anchor", f.anchor)
             .put("autoRes", f.autoRes).put("nearFrac", f.nearFrac).put("farFrac", f.farFrac).put("colsMin", f.colsMin).put("colsMax", f.colsMax).put("faceFrac", eng.faceFrac).put("colsInUse", eng.colsInUse)
-            .put("still", app.still.value != null).put("heads", eng.frame.value?.heads?.size ?: 0).put("headsInfo", eng.frame.value?.heads?.joinToString { "id=${it.id} x=%.0f y=%.0f".format(it.x, it.y) } ?: "").put("cell", eng.frame.value?.cell ?: 0f).put("tracks", eng.tracks.joinToString { "id=${it.id} fb=${it.fallback} pos=${it.pos} box=${it.box}" }).put("imu", f.imu).put("imuRange", f.imuRange).put("imuSatMin", f.imuSatMin).put("imuSatMax", f.imuSatMax).put("roll", eng.roll).put("satInUse", eng.satInUse)
+            .put("still", app.still.value != null).put("alphaCov", eng.dbgAlphaCoverage).put("detHz", eng.detHz).put("segHz", eng.segHz).put("maskInfo", eng.dbgMaskInfo).put("heads", eng.frame.value?.heads?.size ?: 0).put("headsInfo", eng.frame.value?.heads?.joinToString { "id=${it.id} x=%.0f y=%.0f".format(it.x, it.y) } ?: "").put("cell", eng.frame.value?.cell ?: 0f).put("tracks", eng.tracks.joinToString { "id=${it.id} fb=${it.fallback} pos=${it.pos} box=${it.box}" }).put("imu", f.imu).put("imuRange", f.imuRange).put("imuSatMin", f.imuSatMin).put("imuSatMax", f.imuSatMax).put("roll", eng.roll).put("satInUse", eng.satInUse)
     }
 
     companion object {
@@ -114,7 +114,7 @@ function show(s){for(const k of ids){const el=document.getElementById(k);if(docu
 document.getElementById('resLive').textContent='live: face height '+(s.faceFrac*100).toFixed(0)+'% of frame → '+s.colsInUse+' cells across';document.getElementById('imuLive').textContent='live: roll '+s.roll.toFixed(1)+'° → saturation ×'+s.satInUse.toFixed(2);
 for(const k of cks)document.getElementById(k).checked=!!s[k];for(const k of sels)document.getElementById(k).value=s[k];document.getElementById('tint').value=s.tint;
 const r=document.getElementById('rec');r.className=s.recording?'on':'';r.textContent=s.recording?'■ Stop '+Math.floor(s.recSeconds/60).toString().padStart(2,'0')+':'+(s.recSeconds%60).toString().padStart(2,'0'):'● Record';
-document.getElementById('st').textContent=s.photos+' photos · pool '+s.pool+' · '+s.actualFps.toFixed(1)+' fps';}
+document.getElementById('st').textContent=s.photos+' photos · pool '+s.pool+' · '+s.actualFps.toFixed(1)+' fps · face detect '+s.detHz.toFixed(0)+' Hz · segmentation '+s.segHz.toFixed(0)+' Hz';}
 async function set(k,v){busy++;try{show(await (await fetch('/set?'+k+'='+encodeURIComponent(v))).json());}finally{busy--;}}
 for(const k of ids)document.getElementById(k).addEventListener('input',e=>set(k,e.target.value));
 for(const k of cks)document.getElementById(k).addEventListener('change',e=>set(k,e.target.checked?1:0));
