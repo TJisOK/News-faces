@@ -23,8 +23,9 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import kotlin.math.roundToInt
 
-class AppState(private val ctx: Context) {
+class AppState(val ctx: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     val loader: ImageLoader = ImageLoader.Builder(ctx).crossfade(true).build()
 
@@ -41,6 +42,48 @@ class AppState(private val ctx: Context) {
     val analysing = MutableStateFlow(0 to 0) // done, total
     val mode = MutableStateFlow("gallery")
     val viewer = MutableStateFlow<Photo?>(null)
+    val hud = MutableStateFlow(false)           // Face mode: show controls (long-press toggles)
+    val engine: MosaicEngine by lazy { MosaicEngine(this) }
+    var server: ControlServer? = null; private set
+    var controlUrl: String = ""; private set
+
+    fun startServer() {
+        if (server != null) return
+        for (port in intArrayOf(8080, 8081, 8082, 8765)) {
+            try { server = ControlServer(this, port).also { it.start(fi.iki.elonen.NanoHTTPD.SOCKET_READ_TIMEOUT, false) }; controlUrl = "http://${ControlServer.localIp() ?: "<phone-ip>"}:$port"; return } catch (_: Exception) {}
+        }
+    }
+
+    /** Parameters changed from the web control page. */
+    fun applyParam(k: String, v: String) {
+        val f = v.toFloatOrNull(); val b = v == "1" || v == "true"
+        when (k) {
+            "cols" -> f?.let { x -> updateFace { it.copy(cols = x.roundToInt().coerceIn(2, 240)) } }
+            "gap" -> f?.let { x -> updateFace { it.copy(gap = x.coerceIn(0f, 0.5f)) } }
+            "fps" -> f?.let { x -> updateFace { it.copy(fps = x.roundToInt().coerceIn(1, 30)) } }
+            "pad" -> f?.let { x -> updateFace { it.copy(pad = x) } }
+            "hue" -> f?.let { x -> updateFace { it.copy(hue = x) } }
+            "sat" -> f?.let { x -> updateFace { it.copy(sat = x) } }
+            "bright" -> f?.let { x -> updateFace { it.copy(bright = x) } }
+            "contrast" -> f?.let { x -> updateFace { it.copy(contrast = x) } }
+            "tintAmt" -> f?.let { x -> updateFace { it.copy(tintAmt = x) } }
+            "tint" -> try { updateFace { it.copy(tint = android.graphics.Color.parseColor(v)) } } catch (_: Exception) {}
+            "variety" -> f?.let { x -> updateFace { it.copy(variety = x) } }
+            "stability" -> f?.let { x -> updateFace { it.copy(stability = x) } }
+            "match" -> updateFace { it.copy(match = v) }
+            "outline" -> updateFace { it.copy(outline = v) }
+            "mirror" -> updateFace { it.copy(mirror = b) }
+            "freeze" -> updateFace { it.copy(freeze = b) }
+            "track" -> { updateFace { it.copy(track = b) }; engine.reset() }
+            "multi" -> { updateFace { it.copy(multi = b) }; engine.reset() }
+            "ageH" -> f?.let { x -> update { it.copy(ageH = x) } }
+            "minSat" -> f?.let { x -> update { it.copy(minSat = x) } }
+            "lightMin" -> f?.let { x -> update { it.copy(lightMin = x) } }
+            "lightMax" -> f?.let { x -> update { it.copy(lightMax = x) } }
+            "max" -> f?.let { x -> update { it.copy(max = x.roundToInt()) } }
+            "sort" -> update { it.copy(sort = v) }
+        }
+    }
 
     private val cacheFile get() = File(ctx.filesDir, "photos.json")
     private var refreshJob: Job? = null

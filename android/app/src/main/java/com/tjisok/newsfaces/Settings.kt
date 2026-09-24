@@ -4,11 +4,11 @@ import android.content.Context
 import org.json.JSONObject
 
 data class FaceSettings(
-    val cols: Int = 40, val pad: Float = 1.9f, val gap: Float = 0.06f,
+    val cols: Int = 48, val pad: Float = 1.9f, val gap: Float = 0.04f, val track: Boolean = false,
     val outline: String = "head", val multi: Boolean = false, val mirror: Boolean = true,
     val hue: Float = 0f, val sat: Float = 1f, val bright: Float = 0f, val contrast: Float = 1f,
     val tint: Int = 0xFFFF7A3D.toInt(), val tintAmt: Float = 0f, val match: String = "avg",
-    val variety: Float = 0.25f, val stability: Float = 0.5f, val fps: Int = 10, val freeze: Boolean = false
+    val variety: Float = 0.25f, val stability: Float = 0.5f, val fps: Int = 30, val freeze: Boolean = false
 )
 
 data class Settings(
@@ -28,7 +28,7 @@ data class Settings(
             .put("hueOff", hueOff).put("gray", gray).put("strip", strip).put("ageH", ageH).put("minSat", minSat)
             .put("lightMin", lightMin).put("lightMax", lightMax).put("max", max).put("refreshMin", refreshMin)
             .put("disabled", disabledSources.joinToString(","))
-            .put("face", JSONObject().put("cols", f.cols).put("pad", f.pad).put("gap", f.gap).put("outline", f.outline).put("multi", f.multi)
+            .put("face", JSONObject().put("cols", f.cols).put("pad", f.pad).put("gap", f.gap).put("outline", f.outline).put("multi", f.multi).put("track", f.track)
                 .put("mirror", f.mirror).put("hue", f.hue).put("sat", f.sat).put("bright", f.bright).put("contrast", f.contrast)
                 .put("tint", f.tint).put("tintAmt", f.tintAmt).put("match", f.match).put("variety", f.variety).put("stability", f.stability).put("fps", f.fps))
         return o.toString()
@@ -49,7 +49,7 @@ data class Settings(
                     disabledSources = o.optString("disabled", "").split(',').filter { it.isNotBlank() }.toSet(),
                     face = if (fo == null) fd else FaceSettings(
                         cols = fo.optInt("cols", fd.cols), pad = fo.optDouble("pad", fd.pad.toDouble()).toFloat(), gap = fo.optDouble("gap", fd.gap.toDouble()).toFloat(),
-                        outline = fo.optString("outline", fd.outline), multi = fo.optBoolean("multi", fd.multi), mirror = fo.optBoolean("mirror", fd.mirror),
+                        outline = fo.optString("outline", fd.outline), multi = fo.optBoolean("multi", fd.multi), track = fo.optBoolean("track", fd.track), mirror = fo.optBoolean("mirror", fd.mirror),
                         hue = fo.optDouble("hue", fd.hue.toDouble()).toFloat(), sat = fo.optDouble("sat", fd.sat.toDouble()).toFloat(),
                         bright = fo.optDouble("bright", fd.bright.toDouble()).toFloat(), contrast = fo.optDouble("contrast", fd.contrast.toDouble()).toFloat(),
                         tint = fo.optInt("tint", fd.tint), tintAmt = fo.optDouble("tintAmt", fd.tintAmt.toDouble()).toFloat(), match = fo.optString("match", fd.match),

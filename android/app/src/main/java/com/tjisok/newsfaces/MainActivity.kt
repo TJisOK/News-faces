@@ -35,6 +35,7 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         if (!::app.isInitialized) app = AppState(applicationContext)
+        app.startServer()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme(primary = Accent, background = Bg, surface = Panel, onSurface = Fg, onBackground = Fg, surfaceVariant = Panel2, outline = Line)) {
                 Root()
@@ -50,14 +51,26 @@ fun Root() {
     val mode by app.mode.collectAsStateWithLifecycle()
     val viewer by app.viewer.collectAsStateWithLifecycle()
     val settings by app.settings.collectAsStateWithLifecycle()
+    val hud by app.hud.collectAsStateWithLifecycle()
     var zoomRequest by remember { mutableStateOf(0) } // +1 zoom in, -1 zoom out, consumed by the active screen
+    val immersive = mode == "face" && !hud
+    // Face mode hides every piece of UI, including the system bars; a long-press brings the controls back
+    val view = androidx.compose.ui.platform.LocalView.current
+    LaunchedEffect(immersive) {
+        val window = (view.context as? android.app.Activity)?.window ?: return@LaunchedEffect
+        val c = androidx.core.view.WindowCompat.getInsetsController(window, view)
+        c.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        if (immersive) c.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars()) else c.show(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+    }
 
-    ModalNavigationDrawer(drawerState = drawer, drawerContent = { ModalDrawerSheet(drawerContainerColor = Panel, modifier = Modifier.width(320.dp)) { MenuContent() } }) {
-        Column(Modifier.fillMaxSize().background(Bg).statusBarsPadding()) {
-            TopBar(mode = mode, sort = settings.sort, onMenu = { scope.launch { drawer.open() } },
-                onMode = { app.mode.value = it }, onSort = { app.update { s -> s.copy(sort = it) } },
-                onZoom = { zoomRequest = if (it > 0) zoomRequest + 1 else zoomRequest - 1 }, onRefresh = { app.refresh() })
-            Spectrum()
+    ModalNavigationDrawer(drawerState = drawer, gesturesEnabled = !immersive, drawerContent = { ModalDrawerSheet(drawerContainerColor = Panel, modifier = Modifier.width(320.dp)) { MenuContent() } }) {
+        Column(Modifier.fillMaxSize().background(Bg).then(if (immersive) Modifier else Modifier.statusBarsPadding())) {
+            if (!immersive) {
+                TopBar(mode = mode, sort = settings.sort, onMenu = { scope.launch { drawer.open() } },
+                    onMode = { app.mode.value = it }, onSort = { app.update { s -> s.copy(sort = it) } },
+                    onZoom = { zoomRequest = if (it > 0) zoomRequest + 1 else zoomRequest - 1 }, onRefresh = { app.refresh() })
+                Spectrum()
+            }
             Box(Modifier.weight(1f)) {
                 if (mode == "face") FaceScreen(zoomRequest) else GalleryScreen(zoomRequest)
             }

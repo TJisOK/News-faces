@@ -1,10 +1,14 @@
 package com.tjisok.newsfaces
 
 import android.Manifest
+import android.app.Activity
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.graphics.Matrix
+import android.graphics.RectF
 import android.net.Uri
+import android.util.Size
+import android.view.WindowManager
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -31,11 +35,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Paint as CPaint
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
@@ -45,21 +51,17 @@ import androidx.concurrent.futures.await
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import android.util.Size
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.Executors
 import kotlin.math.abs
-import kotlin.math.ceil
-import kotlin.math.hypot
-import kotlin.math.min
+import kotlin.math.max
 import kotlin.math.roundToInt
-import kotlin.math.sqrt
 
-private var engineHolder: MosaicEngine? = null
-private fun engine(): MosaicEngine = engineHolder ?: MosaicEngine(app).also { engineHolder = it }
+private class Hover(val photo: Photo, val rect: RectF) // rect in canvas px
 
 @Composable
 fun FaceScreen(zoomRequest: Int) {
@@ -67,108 +69,95 @@ fun FaceScreen(zoomRequest: Int) {
     val lifecycle = LocalLifecycleOwner.current
     val settings by app.settings.collectAsStateWithLifecycle()
     val fs = settings.face
-    val eng = remember { engine() }
+    val eng = app.engine
     val frame by eng.frame.collectAsStateWithLifecycle()
     val message by eng.message.collectAsStateWithLifecycle()
+    val recStatus by eng.recordStatus.collectAsStateWithLifecycle()
+    val hud by app.hud.collectAsStateWithLifecycle()
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     var stillImage by remember { mutableStateOf<Bitmap?>(null) }
-    var recorder by remember { mutableStateOf<MosaicRecorder?>(null) }
-    var recText by remember { mutableStateOf("● Record") }
-    var status by remember { mutableStateOf("") }
+    var showUrl by remember { mutableStateOf(true) }
+    var hover by remember { mutableStateOf<Hover?>(null) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    var zoom by remember { mutableFloatStateOf(1f) }
+    var pan by remember { mutableStateOf(Offset.Zero) }
     val scope = rememberCoroutineScope()
     val permission = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted = it }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri: Uri? ->
-        if (uri != null) scope.launch {
-            val bmp = withContext(Dispatchers.IO) { app.loadBitmap(uri.toString(), 1280) }
-            if (bmp != null) { eng.reset(); stillImage = bmp; withContext(Dispatchers.Default) { eng.process(bmp, still = true) } }
-        }
+        if (uri != null) scope.launch { val bmp = withContext(Dispatchers.IO) { app.loadBitmap(uri.toString(), 1280) }; if (bmp != null) { eng.reset(); stillImage = bmp; withContext(Dispatchers.Default) { eng.process(bmp, still = true) } } }
     }
-    LaunchedEffect(Unit) { if (!granted) permission.launch(Manifest.permission.CAMERA) }
-    // re-process a still whenever face settings change
+    LaunchedEffect(Unit) { if (!granted) permission.launch(Manifest.permission.CAMERA); delay(7000); showUrl = false }
     LaunchedEffect(fs, stillImage) { stillImage?.let { b -> withContext(Dispatchers.Default) { eng.process(b, still = true) } } }
-
-    // zoom / pan state (unbounded)
-    var zoom by remember { mutableFloatStateOf(1f) }
-    var pan by remember { mutableStateOf(Offset.Zero) }
     var lastReq by remember { mutableIntStateOf(zoomRequest) }
-    LaunchedEffect(zoomRequest) { val d = zoomRequest - lastReq; lastReq = zoomRequest; if (d > 0) zoom *= 1.3f else if (d < 0) zoom /= 1.3f }
-    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
-    var prevCentre by remember { mutableStateOf<Offset?>(null) }
-
-    // recording: draw every new frame into the recorder surface
-    LaunchedEffect(frame, recorder) {
-        val r = recorder ?: return@LaunchedEffect; val f = frame ?: return@LaunchedEffect
-        r.frame { c ->
-            c.drawColor(0xFF0B0B0E.toInt())
-            val ex = eng.extents(f); val tc = ex[2] - ex[0]; val tr = ex[3] - ex[1]
-            val cell = min(r.width / tc, r.height / tr); val ox = (r.width - tc * cell) / 2; val oy = (r.height - tr * cell) / 2
-            eng.draw(c, f, cell, fs.gap, ox, oy, ex[0], ex[1])
-        }
-        val s = (System.currentTimeMillis() - r.startedAt) / 1000; recText = "■ %02d:%02d".format(s / 60, s % 60)
-    }
+    LaunchedEffect(zoomRequest) { val d = zoomRequest - lastReq; lastReq = zoomRequest; if (d != 0) app.updateFace { it.copy(cols = (it.cols / if (d > 0) 1.25f else 0.8f).roundToInt().coerceIn(2, 240)) } }
+    // keep the screen on while the mosaic runs
+    DisposableEffect(Unit) { val w = (ctx as? Activity)?.window; w?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON); onDispose { w?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) } }
 
     Box(Modifier.fillMaxSize().background(Bg)) {
-        if (granted && stillImage == null) CameraFeed(eng, fs.mirror, lifecycle)
-        // ---- mosaic canvas with gestures
-        val f = frame
+        if (granted && stillImage == null) CameraFeed(eng, lifecycle, showPip = hud && fs.track)
+
         Canvas(Modifier.fillMaxSize()
+            .onSizeChanged { canvasSize = it; eng.targetW = max(1, it.width); eng.targetH = max(1, it.height) }
             .pointerInput(Unit) {
                 awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    var prevDist = -1f; var prevCentroid = Offset.Zero; var prevSingle: Offset? = down.position; var moved = false
-                    val fr = eng.frame.value; val hit = fr?.let { hitTest(it, eng, down.position, canvasSize, zoom, pan, fs.gap) }
-                    val dragHead = hit?.first; val startPos = dragHead?.let { id -> fr.faces.first { it.id == id }.pos.let { Offset(it.x, it.y) } }
+                    val down = awaitFirstDown(requireUnconsumed = false); down.consume()
+                    val t0 = System.currentTimeMillis(); val startCols = app.settings.value.face.cols
+                    var d0 = -1f; var moved = false; var longPressed = false; var lastCols = startCols; var prevSingle: Offset? = down.position
+                    hover = hoverAt(eng.frame.value, down.position, size, zoom, pan, app.settings.value.face.track)
                     while (true) {
-                        val ev = awaitPointerEvent(); val pressed = ev.changes.filter { it.pressed }
+                        val remaining = 600 - (System.currentTimeMillis() - t0)
+                        val ev = if (!moved && !longPressed && remaining > 0) withTimeoutOrNull(remaining) { awaitPointerEvent() } else awaitPointerEvent()
+                        if (ev == null) { longPressed = true; hover = null; app.hud.value = !app.hud.value; continue }
+                        val pressed = ev.changes.filter { it.pressed }
                         if (pressed.size >= 2) {
-                            val a = pressed[0].position; val b = pressed[1].position; val d = (a - b).getDistance(); val c = (a + b) / 2f
-                            if (prevDist > 0f) { val k = (d / prevDist).coerceIn(0.2f, 5f); val nz = (zoom * k).coerceAtLeast(0.02f); val centre = Offset(size.width / 2f, size.height / 2f); val rel = c - centre; pan = (pan - rel) * (nz / zoom) + rel + (c - prevCentroid); zoom = nz }
-                            prevDist = d; prevCentroid = c; prevSingle = null; moved = true; ev.changes.forEach { it.consume() }
+                            val d = (pressed[0].position - pressed[1].position).getDistance()
+                            if (d0 < 0f) d0 = d else if (d > 0f) { val target = (startCols / (d / d0)).roundToInt().coerceIn(2, 240); if (target != lastCols) { lastCols = target; app.updateFace { it.copy(cols = target) } } }
+                            moved = true; hover = null; prevSingle = null; ev.changes.forEach { it.consume() }
                         } else if (pressed.size == 1) {
-                            prevDist = -1f; val pos = pressed[0].position
-                            prevSingle?.let { if ((pos - it).getDistance() > 4f) moved = true
-                                if (dragHead != null && fr != null && startPos != null) { val total = pos - down.position; val u = cellPx(fr, eng, canvasSize) * zoom * fr.cols; eng.setPos(dragHead, startPos.x + total.x / u, startPos.y + total.y / u); if (stillImage != null) eng.frame.value = fr.copy(faces = fr.faces.map { m -> if (m.id == dragHead) FaceMosaic(m.id, m.cells, m.alpha, android.graphics.PointF(startPos.x + total.x / u, startPos.y + total.y / u)) else m }) }
-                                else pan += pos - it }
+                            d0 = -1f; val pos = pressed[0].position
+                            if ((pos - down.position).getDistance() > 10f) moved = true
+                            if (app.settings.value.face.track && moved) { prevSingle?.let { pan += pos - it }; hover = null } else if (!longPressed) hover = hoverAt(eng.frame.value, pos, size, zoom, pan, app.settings.value.face.track)
                             prevSingle = pos; pressed[0].consume()
                         }
                         if (ev.changes.none { it.pressed }) break
                     }
-                    if (!moved && hit != null && fr != null) { val idx = hit.second; if (idx >= 0) app.viewer.value = fr.pool.list[idx] }
+                    val h = hover; hover = null
+                    if (!moved && !longPressed && System.currentTimeMillis() - t0 < 350 && h != null) app.viewer.value = h.photo
+                }
+            }) {
+            val f = frame ?: return@Canvas
+            val bmp = f.bitmap; val s = size.width / bmp.width
+            drawIntoCanvas { c ->
+                val nc = c.nativeCanvas; nc.save()
+                if (fs.track) { nc.translate(size.width / 2f + pan.x, size.height / 2f + pan.y); nc.scale(zoom, zoom); nc.translate(-size.width / 2f, -size.height / 2f) }
+                nc.drawBitmap(bmp, null, RectF(0f, 0f, bmp.width * s, bmp.height * s), bmpPaint)
+                nc.restore()
+                hover?.let { h ->
+                    val th = eng.thumbs[h.photo.id]; val r = h.rect; val grow = r.width() * 1.1f
+                    val big = RectF(r.left - grow, r.top - grow, r.right + grow, r.bottom + grow)
+                    shadow.setShadowLayer(18f, 0f, 8f, 0x99000000.toInt()); nc.drawRoundRect(big, 10f, 10f, shadow)
+                    if (th != null) { nc.save(); nc.clipPath(android.graphics.Path().apply { addRoundRect(big, 10f, 10f, android.graphics.Path.Direction.CW) }); nc.drawBitmap(th, null, big, bmpPaint); nc.restore() }
+                    else { fill.color = h.photo.color?.avg ?: 0xFF444444.toInt(); nc.drawRoundRect(big, 10f, 10f, fill) }
+                    nc.drawRoundRect(big, 10f, 10f, ring)
                 }
             }
-            .onSizeChangedCompat { canvasSize = it }) {
-            if (f == null) return@Canvas
-            val ex = eng.extents(f); val tc = ex[2] - ex[0]; val tr = ex[3] - ex[1]
-            val base = cellPx(f, eng, canvasSize)
-            // keep the composition still when extents change (canvas content is centred)
-            val centre = Offset((ex[0] + ex[2]) / 2f, (ex[1] + ex[3]) / 2f)
-            prevCentre?.let { pc -> if (pc != centre) pan += (centre - pc) * base * zoom }
-            prevCentre = centre
-            val cell = base * zoom
-            val ox = size.width / 2f + pan.x - tc * cell / 2f; val oy = size.height / 2f + pan.y - tr * cell / 2f
-            drawIntoCanvas { c -> eng.draw(c.nativeCanvas, f, cell, fs.gap, ox, oy, ex[0], ex[1]) }
         }
 
         // ---- messages
-        val msg = when { !granted && stillImage == null -> "Camera permission is needed. Or pick a photo below."; message.isNotEmpty() && frame == null -> message; else -> message }
-        if (msg.isNotEmpty() || status.isNotEmpty()) Text(if (status.isNotEmpty()) status else msg, color = Fg, fontSize = 13.sp, textAlign = TextAlign.Center,
-            modifier = Modifier.align(Alignment.Center).background(Panel.copy(alpha = .9f), RoundedCornerShape(12.dp)).padding(14.dp, 10.dp))
+        val msg = when { !granted && stillImage == null -> "Camera permission is needed. Long-press for controls, or pick a photo."; recStatus.isNotEmpty() -> recStatus; else -> message }
+        if (msg.isNotEmpty()) Text(msg, color = Fg, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.Center).background(Panel.copy(alpha = .9f), RoundedCornerShape(12.dp)).padding(14.dp, 10.dp))
+        if (showUrl && app.controlUrl.isNotEmpty()) Column(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 14.dp).background(Panel.copy(alpha = .92f), RoundedCornerShape(12.dp)).padding(14.dp, 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Text("Control from your computer", color = Muted, fontSize = 11.sp); Text(app.controlUrl, color = Fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text("Long-press the screen for on-device controls", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+        }
+        hover?.let { h -> Text("${h.photo.source} · ${h.photo.title}", color = Fg, fontSize = 12.sp, maxLines = 2, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp).background(Panel.copy(alpha = .9f), RoundedCornerShape(10.dp)).padding(10.dp, 6.dp)) }
 
-        // ---- bottom controls
-        Row(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = {
-                val r = recorder
-                if (r == null) {
-                    val fr = frame; if (fr == null) { status = "Nothing to record yet"; scope.launch { delay(2000); status = "" }; return@Button }
-                    val ex = eng.extents(fr); val ar = (ex[2] - ex[0]) / (ex[3] - ex[1])
-                    var w = if (ar >= 1f) 1920 else (1920 * ar).roundToInt(); var h = if (ar >= 1f) (1920 / ar).roundToInt() else 1920; w = w and 1.inv(); h = h and 1.inv()
-                    try { recorder = MosaicRecorder(ctx, w, h, fs.fps) } catch (e: Exception) { status = "Cannot record: ${e.message}"; scope.launch { delay(3000); status = "" } }
-                } else {
-                    recorder = null; recText = "● Record"
-                    scope.launch { val uri = withContext(Dispatchers.IO) { r.stop() }; status = "Saved to Movies/NewsFaces · ${r.frames} frames"; delay(3500); status = "" }
-                }
-            }, colors = ButtonDefaults.buttonColors(containerColor = if (recorder != null) Color(0xFFE0322F) else Panel2)) { Text(recText, color = if (recorder != null) Color.White else Color(0xFFFF6B6B)) }
-            OutlinedButton(onClick = { eng.arrange(); zoom = 1f; pan = Offset.Zero; prevCentre = null; stillImage?.let { b -> scope.launch(Dispatchers.Default) { eng.process(b, still = true) } } }) { Text("Arrange", color = Fg) }
+        // ---- HUD (long-press to toggle)
+        if (hud) Row(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val recording = eng.isRecording
+            Button(onClick = { if (recording) eng.stopRecording() else eng.startRecording() }, colors = ButtonDefaults.buttonColors(containerColor = if (recording) Color(0xFFE0322F) else Panel2)) { Text(if (recording) "■ Stop" else "● Record", color = if (recording) Color.White else Color(0xFFFF6B6B)) }
+            OutlinedButton(onClick = { app.updateFace { it.copy(track = !it.track) }; eng.reset(); zoom = 1f; pan = Offset.Zero }) { Text(if (fs.track) "Heads" else "Frame", color = Fg) }
+            if (fs.track) OutlinedButton(onClick = { eng.arrange(); zoom = 1f; pan = Offset.Zero }) { Text("Arrange", color = Fg) }
             OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }) { Text("Photo", color = Fg) }
             if (stillImage != null) OutlinedButton(onClick = { stillImage = null; eng.reset() }) { Text("Camera", color = Fg) }
             else if (!granted) OutlinedButton(onClick = { permission.launch(Manifest.permission.CAMERA) }) { Text("Allow camera", color = Fg) }
@@ -176,30 +165,34 @@ fun FaceScreen(zoomRequest: Int) {
     }
 }
 
-/** css-like base cell size: fit the standard grid layout for n heads into the canvas */
-private fun cellPx(f: MosaicFrame, eng: MosaicEngine, size: IntSize): Float {
-    if (size.width == 0) return 4f
-    val n = f.faces.size.coerceAtLeast(1); val k = ceil(sqrt(n.toDouble())).toInt().coerceAtLeast(1); val r = ceil(n / k.toDouble()).toInt(); val gu = if (n > 1) 0.06f else 0f
-    val tc = (k + (k - 1) * gu) * f.cols; val tr = r * f.rows + (r - 1) * gu * f.cols
-    return min(size.width * 0.94f / tc, size.height * 0.94f / tr)
-}
+private val bmpPaint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+private val ring = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { style = android.graphics.Paint.Style.STROKE; strokeWidth = 4f; color = android.graphics.Color.WHITE }
+private val shadow = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF222222.toInt() }
+private val fill = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
 
-/** returns (faceId, poolIndex) under a screen point, or null */
-private fun hitTest(f: MosaicFrame, eng: MosaicEngine, p: Offset, size: IntSize, zoom: Float, pan: Offset, gap: Float): Pair<Int, Int>? {
-    val ex = eng.extents(f); val tc = ex[2] - ex[0]; val tr = ex[3] - ex[1]; val cell = cellPx(f, eng, size) * zoom
-    val ox = size.width / 2f + pan.x - tc * cell / 2f; val oy = size.height / 2f + pan.y - tr * cell / 2f
-    val cx = (p.x - ox) / cell + ex[0]; val cy = (p.y - oy) / cell + ex[1]
-    for (m in f.faces) { val x = m.pos.x * f.cols; val y = m.pos.y * f.cols
-        if (cx >= x && cx < x + f.cols && cy >= y && cy < y + f.rows) { val i = (cy - y).toInt() * f.cols + (cx - x).toInt(); return m.id to (m.cells.getOrNull(i) ?: -1) } }
+/** which photo cell is under a canvas point; returns the cell's canvas rect */
+private fun hoverAt(f: RenderedFrame?, p: Offset, size: IntSize, zoom: Float, pan: Offset, track: Boolean): Hover? {
+    if (f == null || size.width == 0) return null
+    val s = size.width.toFloat() / f.bitmap.width
+    var px = p.x; var py = p.y
+    if (track) { val cx = size.width / 2f; val cy = size.height / 2f; px = (px - cx - pan.x) / zoom + cx; py = (py - cy - pan.y) / zoom + cy }
+    val bx = px / s; val by = py / s
+    for (h in f.heads) {
+        val w = f.cols * f.cell; val hh = f.rows * f.cell
+        if (bx >= h.x && bx < h.x + w && by >= h.y && by < h.y + hh) {
+            val ci = ((bx - h.x) / f.cell).toInt(); val cj = ((by - h.y) / f.cell).toInt(); val j = h.cells.getOrNull(cj * f.cols + ci) ?: -1
+            if (j < 0 || j >= f.pool.list.size) return null
+            val left = h.x + ci * f.cell; val top = h.y + cj * f.cell
+            val r = RectF(left * s, top * s, (left + f.cell) * s, (top + f.cell) * s)
+            if (track) { val cx = size.width / 2f; val cy = size.height / 2f; r.set((r.left - cx) * zoom + cx + pan.x, (r.top - cy) * zoom + cy + pan.y, (r.right - cx) * zoom + cx + pan.x, (r.bottom - cy) * zoom + cy + pan.y) }
+            return Hover(f.pool.list[j], r)
+        }
+    }
     return null
 }
 
-private fun Modifier.onSizeChangedCompat(f: (IntSize) -> Unit): Modifier = this.then(Modifier.onSizeChanged(f))
-
-private fun MosaicFrame.copy(faces: List<FaceMosaic>) = MosaicFrame(cols, rows, faces, pool, time)
-
 @Composable
-private fun CameraFeed(eng: MosaicEngine, mirror: Boolean, lifecycle: androidx.lifecycle.LifecycleOwner) {
+private fun CameraFeed(eng: MosaicEngine, lifecycle: androidx.lifecycle.LifecycleOwner, showPip: Boolean) {
     val ctx = LocalContext.current
     val previewView = remember { PreviewView(ctx).apply { scaleType = PreviewView.ScaleType.FILL_CENTER } }
     val executor = remember { Executors.newSingleThreadExecutor() }
@@ -217,9 +210,10 @@ private fun CameraFeed(eng: MosaicEngine, mirror: Boolean, lifecycle: androidx.l
                 analysis.setAnalyzer(executor) { proxy ->
                     try {
                         if (!app.settings.value.face.freeze) {
+                            val t0 = System.nanoTime()
                             val bmp = proxy.toBitmap(); val rot = proxy.imageInfo.rotationDegrees
-                            val upright = if (rot != 0) Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, Matrix().apply { postRotate(rot.toFloat()) }, true) else bmp
-                            eng.process(upright, still = false)
+                            eng.tPrep += (System.nanoTime() - t0) / 1e6
+                            eng.process(bmp, still = false, rot = rot)
                         }
                     } catch (_: Exception) {} finally { proxy.close() }
                 }
@@ -230,6 +224,6 @@ private fun CameraFeed(eng: MosaicEngine, mirror: Boolean, lifecycle: androidx.l
         onDispose { job.cancel(); provider?.unbindAll(); executor.shutdown() }
     }
     Box(Modifier.fillMaxSize()) {
-        AndroidView(factory = { previewView }, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 12.dp, bottom = 72.dp).size(120.dp, 90.dp).clip(RoundedCornerShape(10.dp)))
+        AndroidView(factory = { previewView }, modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(end = 12.dp, top = 12.dp).size(if (showPip) 120.dp else 1.dp, if (showPip) 90.dp else 1.dp).clip(RoundedCornerShape(10.dp)))
     }
 }

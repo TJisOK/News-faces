@@ -49,4 +49,5 @@ dependencies {
     implementation("androidx.concurrent:concurrent-futures-ktx:1.2.0")
     implementation("com.google.mlkit:face-detection:16.1.7")
     implementation("com.google.mlkit:segmentation-selfie:16.0.0-beta6")
+    implementation("org.nanohttpd:nanohttpd:2.3.1")
 }
