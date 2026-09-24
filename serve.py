@@ -38,5 +38,16 @@ class Server(socketserver.ThreadingMixIn, http.server.HTTPServer):
     daemon_threads = True
 
 if __name__ == '__main__':
+    try:
+        server = Server(('', PORT), Handler)
+    except OSError as e:
+        if e.errno in (48, 98):  # address already in use
+            print(f'Port {PORT} is already in use. News Photos is probably already running: open http://localhost:{PORT}')
+            print(f'To use another port: python3 serve.py {PORT + 1}')
+            sys.exit(0)
+        raise
     print(f'News Photos running at http://localhost:{PORT}  (Ctrl+C to stop)')
-    Server(('', PORT), Handler).serve_forever()
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print('\nstopped')
