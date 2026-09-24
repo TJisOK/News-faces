@@ -74,6 +74,7 @@ fun FaceScreen(zoomRequest: Int) {
     val message by eng.message.collectAsStateWithLifecycle()
     val recStatus by eng.recordStatus.collectAsStateWithLifecycle()
     val hud by app.hud.collectAsStateWithLifecycle()
+    val presetLabel by app.presetLabel.collectAsStateWithLifecycle()
     var granted by remember { mutableStateOf(ContextCompat.checkSelfPermission(ctx, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) }
     var stillImage by remember { mutableStateOf<Bitmap?>(null) }
     var showUrl by remember { mutableStateOf(true) }
@@ -103,13 +104,20 @@ fun FaceScreen(zoomRequest: Int) {
                     val down = awaitFirstDown(requireUnconsumed = false); down.consume()
                     val t0 = System.currentTimeMillis(); val startCols = app.settings.value.face.cols
                     var d0 = -1f; var moved = false; var longPressed = false; var lastCols = startCols; var prevSingle: Offset? = down.position
+                    var swipeStartX = Float.NaN; var swiped = false
                     hover = hoverAt(eng.frame.value, down.position, size, zoom, pan, app.settings.value.face.track)
                     while (true) {
                         val remaining = 600 - (System.currentTimeMillis() - t0)
                         val ev = if (!moved && !longPressed && remaining > 0) withTimeoutOrNull(remaining) { awaitPointerEvent() } else awaitPointerEvent()
                         if (ev == null) { longPressed = true; hover = null; app.hud.value = !app.hud.value; continue }
                         val pressed = ev.changes.filter { it.pressed }
-                        if (pressed.size >= 2) {
+                        if (pressed.size >= 3) { // three-finger horizontal swipe: switch preset (left = next, right = previous)
+                            val cx = pressed.map { it.position.x }.average().toFloat()
+                            if (swipeStartX.isNaN()) swipeStartX = cx
+                            else if (!swiped && abs(cx - swipeStartX) > 140f) { swiped = true; app.applyPreset(app.presetIndex() + if (cx < swipeStartX) 1 else -1); zoom = 1f; pan = Offset.Zero }
+                            moved = true; hover = null; d0 = -1f; ev.changes.forEach { it.consume() }
+                        } else if (swiped) { ev.changes.forEach { it.consume() } }
+                        else if (pressed.size >= 2) {
                             val d = (pressed[0].position - pressed[1].position).getDistance()
                             if (d0 < 0f) d0 = d else if (d > 0f) { val target = (startCols / (d / d0)).roundToInt().coerceIn(2, 240); if (target != lastCols) { lastCols = target; app.updateFace { it.copy(cols = target) } } }
                             moved = true; hover = null; prevSingle = null; ev.changes.forEach { it.consume() }
@@ -148,8 +156,9 @@ fun FaceScreen(zoomRequest: Int) {
         if (msg.isNotEmpty()) Text(msg, color = Fg, fontSize = 13.sp, textAlign = TextAlign.Center, modifier = Modifier.align(Alignment.Center).background(Panel.copy(alpha = .9f), RoundedCornerShape(12.dp)).padding(14.dp, 10.dp))
         if (showUrl && app.controlUrl.isNotEmpty()) Column(Modifier.align(Alignment.TopCenter).statusBarsPadding().padding(top = 14.dp).background(Panel.copy(alpha = .92f), RoundedCornerShape(12.dp)).padding(14.dp, 10.dp), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("Control from your computer", color = Muted, fontSize = 11.sp); Text(app.controlUrl, color = Fg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
-            Text("Long-press the screen for on-device controls", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
+            Text("Long-press for controls · swipe with three fingers to switch Frame / Head / Heads", color = Muted, fontSize = 11.sp, modifier = Modifier.padding(top = 4.dp))
         }
+        if (presetLabel.isNotEmpty()) Text(presetLabel, color = Fg, fontSize = 28.sp, fontWeight = FontWeight.Bold, modifier = Modifier.align(Alignment.Center).background(Panel.copy(alpha = .85f), RoundedCornerShape(16.dp)).padding(26.dp, 14.dp))
         hover?.let { h -> Text("${h.photo.source} · ${h.photo.title}", color = Fg, fontSize = 12.sp, maxLines = 2, modifier = Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(16.dp).background(Panel.copy(alpha = .9f), RoundedCornerShape(10.dp)).padding(10.dp, 6.dp)) }
 
         // ---- HUD (long-press to toggle)

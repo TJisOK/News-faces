@@ -58,6 +58,7 @@ input[type=range]{width:100%;accent-color:#0a84ff}select,button{font:inherit;col
 img{width:100%;border-radius:12px;background:#000;display:block}.st{color:#8e8ea0;font-size:12px;margin-top:8px}label.ck{display:flex;gap:8px;align-items:center;margin:6px 0}@media(max-width:700px){.wrap{grid-template-columns:1fr}}</style></head><body><div class="wrap"><div>
 <h1>News Faces · phone control</h1>
 <div class="row"><button id="rec">● Record</button><button onclick="fetch('/arrange')">Arrange heads</button><label class="ck"><input type="checkbox" id="freeze"> Freeze</label></div>
+<div class="row" style="margin-top:8px"><span style="color:#8e8ea0;font-size:12px">Preset</span><button onclick="set('preset','Frame')">Frame</button><button onclick="set('preset','Head')">Head</button><button onclick="set('preset','Heads')">Heads</button></div>
 <h2>Pixels</h2>
 <div class="c"><label>Density (cells across) <output id="o-cols"></output></label><input type="range" id="cols" min="4" max="200" step="1"></div>
 <div class="c"><label>Cell gap <output id="o-gap"></output></label><input type="range" id="gap" min="0" max="0.5" step="0.01"></div>

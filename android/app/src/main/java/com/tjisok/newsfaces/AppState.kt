@@ -54,6 +54,17 @@ class AppState(val ctx: Context) {
         }
     }
 
+    /** Face-mode presets, cycled with a three-finger horizontal swipe: 0 whole frame, 1 largest head centred, 2 all heads in a grid */
+    val PRESETS = listOf("Frame", "Head", "Heads")
+    val presetLabel = MutableStateFlow("")
+    fun presetIndex(): Int { val f = settings.value.face; return if (!f.track) 0 else if (f.multi) 2 else 1 }
+    fun applyPreset(i: Int) {
+        val idx = i.coerceIn(0, PRESETS.size - 1)
+        updateFace { when (idx) { 0 -> it.copy(track = false); 1 -> it.copy(track = true, multi = false, outline = "head"); else -> it.copy(track = true, multi = true, outline = "head") } }
+        engine.reset(); presetLabel.value = PRESETS[idx]
+        scope.launch { delay(1400); if (presetLabel.value == PRESETS[idx]) presetLabel.value = "" }
+    }
+
     /** Parameters changed from the web control page. */
     fun applyParam(k: String, v: String) {
         val f = v.toFloatOrNull(); val b = v == "1" || v == "true"
@@ -82,6 +93,7 @@ class AppState(val ctx: Context) {
             "lightMax" -> f?.let { x -> update { it.copy(lightMax = x) } }
             "max" -> f?.let { x -> update { it.copy(max = x.roundToInt()) } }
             "sort" -> update { it.copy(sort = v) }
+            "preset" -> { val i = PRESETS.indexOfFirst { it.equals(v, ignoreCase = true) }; if (i >= 0) applyPreset(i) else v.toIntOrNull()?.let { applyPreset(it) } }
         }
     }
 
