@@ -238,7 +238,7 @@ class MosaicEngine(private val app: AppState) {
                 val by = (t.box.centerY() - crop.top) / crop.height() * rows; val rx = bw * 0.62f; val ry = bh * 0.72f
                 for (y in 0 until rows) for (x in 0 until cols) { val dx = (x + .5f - bx) / rx; val dy = (y + .5f - by) / ry; cov[y * cols + x] = if (dx * dx + dy * dy <= 1f) 255f else 0f }
             } else {
-                val start = chin + bh * (if (extent == "head") 0f else 0.15f); val fade = bh * (if (extent == "head") 0.1f else 0.2f)
+                val start = chin + bh * (if (extent == "head") -0.02f else 0.05f); val fade = bh * (if (extent == "head") 0.08f else 0.15f)
                 for (y in 0 until rows) { val k = ((y - start) / fade).coerceIn(0f, 1f); if (k > 0f) { val f = 1f - k * k; for (x in 0 until cols) cov[y * cols + x] *= f } }
             }
         }

@@ -43,7 +43,7 @@ class ControlServer(private val app: AppState, port: Int) : NanoHTTPD(port) {
             .put("photos", app.photos.value.size).put("pool", eng.poolSize).put("actualFps", eng.measuredFps).put("recording", eng.isRecording).put("recSeconds", eng.recordingSeconds)
             .put("headScale", f.headScale).put("extent", f.extent).put("anchor", f.anchor)
             .put("autoRes", f.autoRes).put("nearFrac", f.nearFrac).put("farFrac", f.farFrac).put("colsMin", f.colsMin).put("colsMax", f.colsMax).put("faceFrac", eng.faceFrac).put("colsInUse", eng.colsInUse)
-            .put("still", app.still.value != null).put("imu", f.imu).put("imuRange", f.imuRange).put("imuSatMin", f.imuSatMin).put("imuSatMax", f.imuSatMax).put("roll", eng.roll).put("satInUse", eng.satInUse)
+            .put("still", app.still.value != null).put("heads", eng.frame.value?.heads?.size ?: 0).put("headsInfo", eng.frame.value?.heads?.joinToString { "id=${it.id} x=%.0f y=%.0f".format(it.x, it.y) } ?: "").put("cell", eng.frame.value?.cell ?: 0f).put("tracks", eng.tracks.joinToString { "id=${it.id} fb=${it.fallback} pos=${it.pos} box=${it.box}" }).put("imu", f.imu).put("imuRange", f.imuRange).put("imuSatMin", f.imuSatMin).put("imuSatMax", f.imuSatMax).put("roll", eng.roll).put("satInUse", eng.satInUse)
     }
 
     companion object {
