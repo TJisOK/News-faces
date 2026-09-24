@@ -37,6 +37,11 @@ details.sec[open] summary::after{transform:rotate(90deg)}
 .check{display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer}
 .check input{accent-color:var(--accent);width:16px;height:16px}
 .check .n{flex:1}
+.pub{margin:8px 0 4px}
+.pubhead{display:flex;justify-content:space-between;align-items:center;font-size:12.5px;margin:6px 0 2px}
+.pubhead span{display:flex;gap:4px}
+.mini{font-size:10.5px;color:var(--muted);background:var(--panel2);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+.mini:hover{color:var(--fg)}
 .check small{color:var(--muted)}
 .btn{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:8px 12px;font-size:13px;transition:background .15s}
 .btn:hover{background:#26262f}
@@ -204,7 +209,7 @@ input[type=color]{width:34px;height:26px;border:0;background:none;padding:0;bord
       <div id="sources"></div>
       <div class="ctl" style="margin-top:12px"><label>Auto refresh <output id="o-refreshMin"></output></label><input type="range" id="s-refreshMin" min="0" max="60" step="1"></div>
       <div class="row"><button class="btn primary" id="refreshNow">Refresh now</button><button class="btn" id="clearCache">Clear cache</button></div>
-      <p class="hint" id="proxyHint">Feeds are fetched through public CORS proxies. For a faster, more reliable feed run <code>python3 serve.py</code> in this folder and open <code>http://localhost:8765</code>.</p>
+      <p class="hint" id="proxyHint">Through public proxies each section yields about 10 photos per pass, fetched one every few seconds; auto refresh keeps topping the cache up. With <code>python3 serve.py</code> at <code>http://localhost:8765</code> feeds load in parallel with their full item lists.</p>
     </details>
   </div></aside>
 
@@ -249,21 +254,17 @@ const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 const enc=encodeURIComponent;
 
 /* ------------------------------------------------------------------ feeds */
-const FEEDS=[
- {id:'guardian-world',name:'The Guardian',sec:'World',url:'https://www.theguardian.com/world/rss',on:true,xml:true},
- {id:'guardian-culture',name:'The Guardian',sec:'Culture',url:'https://www.theguardian.com/culture/rss',on:true,xml:true},
- {id:'guardian-sport',name:'The Guardian',sec:'Sport',url:'https://www.theguardian.com/sport/rss',on:false,xml:true},
- {id:'bbc-world',name:'BBC News',sec:'World',url:'https://feeds.bbci.co.uk/news/world/rss.xml',on:true},
- {id:'bbc-sci',name:'BBC News',sec:'Science & Environment',url:'https://feeds.bbci.co.uk/news/science_and_environment/rss.xml',on:true},
- {id:'bbc-ent',name:'BBC News',sec:'Entertainment & Arts',url:'https://feeds.bbci.co.uk/news/entertainment_and_arts/rss.xml',on:false},
- {id:'nyt-world',name:'New York Times',sec:'World',url:'https://rss.nytimes.com/services/xml/rss/nyt/World.xml',on:true},
- {id:'nyt-arts',name:'New York Times',sec:'Arts',url:'https://rss.nytimes.com/services/xml/rss/nyt/Arts.xml',on:false},
- {id:'nyt-sports',name:'New York Times',sec:'Sports',url:'https://rss.nytimes.com/services/xml/rss/nyt/Sports.xml',on:false},
- {id:'cbc-world',name:'CBC',sec:'World',url:'https://www.cbc.ca/webfeed/rss/rss-world',on:true},
- {id:'france24',name:'France 24',sec:'Top stories',url:'https://www.france24.com/en/rss',on:true},
- {id:'nbc-world',name:'NBC News',sec:'World',url:'https://feeds.nbcnews.com/nbcnews/public/world',on:true},
- {id:'abc-au',name:'ABC Australia',sec:'Top stories',url:'https://www.abc.net.au/news/feed/2942460/rss.xml',on:false},
-];
+const FEEDS=(()=>{
+  const out=[];const add=(pub,name,xml,list)=>{for(const[sec,url,on]of list)out.push({id:pub+'-'+sec.toLowerCase().replace(/[^a-z0-9]+/g,'-'),pub,name,sec,url,on:on!==false,xml:!!xml});};
+  const G=sec=>`https://www.theguardian.com/${sec}/rss`,B=sec=>`https://feeds.bbci.co.uk/news/${sec}/rss.xml`,N=sec=>`https://rss.nytimes.com/services/xml/rss/nyt/${sec}.xml`,C=sec=>`https://www.cbc.ca/webfeed/rss/rss-${sec}`,F=sec=>`https://www.france24.com/en/${sec}rss`,NB=sec=>`https://feeds.nbcnews.com/nbcnews/public/${sec}`;
+  add('guardian','The Guardian',true,[['World',G('world')],['UK',G('uk-news')],['US',G('us-news')],['Environment',G('environment')],['Science',G('science')],['Technology',G('technology')],['Business',G('business')],['Sport',G('sport')],['Football',G('football')],['Culture',G('culture')],['Film',G('film')],['Music',G('music')],['Art & design',G('artanddesign')],['Fashion',G('fashion')],['Food',G('food')],['Travel',G('travel')],['Global development',G('global-development')]]);
+  add('bbc','BBC News',false,[['World',B('world')],['UK',B('uk')],['Business',B('business')],['Politics',B('politics')],['Health',B('health')],['Science & Environment',B('science_and_environment')],['Technology',B('technology')],['Entertainment & Arts',B('entertainment_and_arts')],['Asia',B('world/asia')],['Europe',B('world/europe')],['US & Canada',B('world/us_and_canada')],['Africa',B('world/africa')],['Middle East',B('world/middle_east')],['Sport','https://feeds.bbci.co.uk/sport/rss.xml']]);
+  add('nyt','New York Times',false,[['World',N('World')],['US',N('US')],['Business',N('Business')],['Technology',N('Technology')],['Science',N('Science')],['Climate',N('Climate')],['Arts',N('Arts')],['Music',N('Music')],['Fashion & Style',N('FashionandStyle')],['Food',N('DiningandWine')],['Middle East',N('MiddleEast')],['Americas',N('Americas')]]);
+  add('cbc','CBC',false,[['Top stories',C('topstories')],['World',C('world')],['Canada',C('canada')],['Politics',C('politics')],['Business',C('business')],['Arts',C('arts')],['Sports',C('sports')],['Indigenous',C('Indigenous')]]);
+  add('france24','France 24',false,[['Top stories',F('')],['Europe',F('europe/')],['Africa',F('africa/')],['Americas',F('americas/')],['Asia-Pacific',F('asia-pacific/')],['Middle East',F('middle-east/')],['Culture',F('culture/')],['Sport',F('sport/')]]);
+  add('nbc','NBC News',false,[['World',NB('world')],['US news',NB('us-news')],['Politics',NB('politics')],['Business',NB('business')],['Tech',NB('tech')],['Science',NB('science')],['Pop culture',NB('pop-culture')]]);
+  add('abc','ABC Australia',false,[['Top stories','https://www.abc.net.au/news/feed/2942460/rss.xml'],['Just in','https://www.abc.net.au/news/feed/51120/rss.xml'],['Business','https://www.abc.net.au/news/feed/51892/rss.xml'],['Sport','https://www.abc.net.au/news/feed/45910/rss.xml']]);
+  return out;})();
 const isLocalServer=/^https?:$/.test(location.protocol)&&/localhost|127\.0\.0\.1/.test(location.hostname);
 const PROXIES=[
  {name:'local',kind:'xml',only:isLocalServer,url:u=>`${location.origin}/proxy?url=${enc(u)}`},
@@ -275,10 +276,12 @@ const PROXIES=[
 ];
 
 /* --------------------------------------------------------------- settings */
-const DEF={tile:0,gap:6,radius:10,aspect:1,pop:1.06,anim:420,sort:'newest',reverse:false,hueOff:0,gray:0.12,strip:0,glow:0,satboost:1,ageH:48,minSat:0,lightMin:0,lightMax:1,max:200,refreshMin:10,sources:{},collapsed:false};
+const DEF={tile:0,gap:6,radius:10,aspect:1,pop:1.06,anim:420,sort:'newest',reverse:false,hueOff:0,gray:0.12,strip:0,glow:0,satboost:1,ageH:48,minSat:0,lightMin:0,lightMax:1,max:600,refreshMin:10,sources:{},collapsed:false};
 let S=Object.assign({},DEF);
 try{Object.assign(S,JSON.parse(localStorage.getItem('newsgal.settings.v1')||'{}'));}catch{}
+if(S.max===200)S.max=600; // old default, raised now that dozens of sections are fetched
 for(const f of FEEDS) if(!(f.id in S.sources)) S.sources[f.id]=f.on;
+for(const k of Object.keys(S.sources)) if(!FEEDS.some(f=>f.id===k)) delete S.sources[k];
 const saveSettings=()=>{try{localStorage.setItem('newsgal.settings.v1',JSON.stringify(S));}catch{}};
 
 const FMT={gap:v=>v+'px',radius:v=>v+'px',aspect:v=>(+v).toFixed(2),pop:v=>'×'+(+v).toFixed(2),anim:v=>v+'ms',hueOff:v=>v+'°',gray:v=>(+v).toFixed(2),strip:v=>v+'px',glow:v=>v+'px',satboost:v=>'×'+(+v).toFixed(2),ageH:v=>v<24?v+'h':(v/24).toFixed(1).replace(/\.0$/,'')+'d',minSat:v=>(+v).toFixed(2),lightMin:v=>(+v).toFixed(2),lightMax:v=>(+v).toFixed(2),max:v=>v,refreshMin:v=>v==0?'off':v+' min'};
@@ -313,12 +316,21 @@ $('#s-tile').addEventListener('change',()=>{setTile(snapTile(S.tile),false);});
 
 function buildSources(){
   const box=$('#sources'); box.innerHTML='';
-  for(const f of FEEDS){
-    const l=document.createElement('label'); l.className='check';
-    l.innerHTML=`<input type="checkbox" ${S.sources[f.id]?'checked':''}><span class="n">${f.name} <small>· ${f.sec}</small></span><small class="cnt" data-id="${f.id}"></small>`;
-    l.querySelector('input').addEventListener('change',e=>{S.sources[f.id]=e.target.checked;saveSettings();if(e.target.checked) fetchFeed(f).then(()=>render()); else render();});
-    box.appendChild(l);
+  const pubs=[...new Set(FEEDS.map(f=>f.pub))];
+  for(const pub of pubs){
+    const list=FEEDS.filter(f=>f.pub===pub);
+    const g=document.createElement('div'); g.className='pub';
+    g.innerHTML=`<div class="pubhead"><b>${list[0].name}</b><span><button class="mini" data-all="1">all</button><button class="mini" data-all="0">none</button></span></div>`;
+    g.querySelectorAll('.mini').forEach(b=>b.addEventListener('click',()=>{const on=b.dataset.all==='1';for(const f of list){S.sources[f.id]=on;}saveSettings();buildSources();if(on)fetchAll();else render();}));
+    for(const f of list){
+      const l=document.createElement('label'); l.className='check';
+      l.innerHTML=`<input type="checkbox" ${S.sources[f.id]?'checked':''}><span class="n">${f.sec}</span><small class="cnt" data-id="${f.id}"></small>`;
+      l.querySelector('input').addEventListener('change',e=>{S.sources[f.id]=e.target.checked;saveSettings();if(e.target.checked) fetchFeed(f).then(()=>render()); else render();});
+      g.appendChild(l);
+    }
+    box.appendChild(g);
   }
+  updateSourceCounts();
 }
 function updateSourceCounts(){const c={};for(const p of photos) c[p.sid]=(c[p.sid]||0)+1;$$('#sources .cnt').forEach(e=>e.textContent=c[e.dataset.id]||'');}
 
@@ -373,33 +385,46 @@ function parseJSON(text){
 }
 async function fetchWithTimeout(url,ms){const c=new AbortController();const t=setTimeout(()=>c.abort(),ms);try{return await fetch(url,{signal:c.signal});}finally{clearTimeout(t);}}
 const feedState={}; // id -> 'loading'|'ok'|'fail'
+const rateLimitedUntil={}; // proxy name -> timestamp
 async function fetchFeed(feed){
   feedState[feed.id]='loading'; setStatus();
   let list=PROXIES.filter(p=>!('only'in p)||p.only);
   if(feed.xml) list=[...list.filter(p=>p.kind==='xml'),...list.filter(p=>p.kind!=='xml')];
-  let items=null;
+  let items=null,limited=false;
   for(const p of list){
+    if((rateLimitedUntil[p.name]||0)>Date.now()){limited=true;continue;}
     try{
-      const r=await fetchWithTimeout(p.url(feed.url),12000); if(!r.ok) throw new Error(r.status);
+      const r=await fetchWithTimeout(p.url(feed.url),12000);
+      if(r.status===429){rateLimitedUntil[p.name]=Date.now()+60000;limited=true;throw new Error(429);}
+      if(!r.ok) throw new Error(r.status);
       const txt=await r.text(); items=p.kind==='json'?parseJSON(txt):parseXML(txt);
       if(items.length){feed.via=p.name;break;}
     }catch(e){ items=null; }
   }
-  if(!items){feedState[feed.id]='fail';setStatus();return 0;}
+  if(!items){feedState[feed.id]=limited?'limited':'fail';setStatus();return limited?'limited':'fail';}
   const now=Date.now(); let n=0; for(const it of items) if(addPhoto(feed,it,now)) n++;
-  feedState[feed.id]='ok'; setStatus(); if(n){queueRender(); analyzeAll();} saveCache(); updateSourceCounts(); return n;
+  feed.last=now; feedState[feed.id]='ok'; setStatus(); if(n){queueRender(); analyzeAll();} saveCache(); updateSourceCounts(); return n;
 }
-let fetching=false;
+let fetching=false,fetchProgress=null;
 async function fetchAll(){
   if(fetching) return; fetching=true; $('#refreshBtn').classList.add('spin');
-  const feeds=FEEDS.filter(f=>S.sources[f.id]); let i=0;
-  const worker=async()=>{while(i<feeds.length){const f=feeds[i++];await fetchFeed(f);await new Promise(r=>setTimeout(r,250));}};
-  await Promise.all([worker(),worker(),worker()]);
-  fetching=false; $('#refreshBtn').classList.remove('spin'); setStatus(); render();
-  // public proxies rate-limit; retry any failed feeds once after a pause
-  const failed=feeds.filter(f=>feedState[f.id]==='fail');
-  if(failed.length&&!fetchAll.retried){fetchAll.retried=true;setTimeout(async()=>{for(const f of failed){await fetchFeed(f);await new Promise(r=>setTimeout(r,1500));}render();},25000);}
-  else if(!failed.length) fetchAll.retried=false;
+  // stalest feeds first, so repeated refreshes keep every section topped up
+  const feeds=FEEDS.filter(f=>S.sources[f.id]).sort((a,b)=>(a.last||0)-(b.last||0));
+  const queue=[...feeds]; fetchProgress={done:0,total:feeds.length};
+  const gap=isLocalServer?250:3500; // public proxies allow roughly one request every few seconds
+  const worker=async()=>{
+    while(queue.length){
+      const f=queue.shift(); const res=await fetchFeed(f); fetchProgress.done++;
+      if(res==='limited'){ // wait out the rate limit, then retry this feed once
+        const until=Math.max(...Object.values(rateLimitedUntil),0); await new Promise(r=>setTimeout(r,Math.max(1000,until-Date.now())));
+        if(!f.retried){f.retried=true;queue.push(f);fetchProgress.total++;}
+      }
+      await new Promise(r=>setTimeout(r,gap));
+    }
+  };
+  await Promise.all(isLocalServer?[worker(),worker(),worker()]:[worker()]);
+  for(const f of feeds) f.retried=false;
+  fetching=false; fetchProgress=null; $('#refreshBtn').classList.remove('spin'); setStatus(); render();
 }
 function saveCache(){try{localStorage.setItem('newsgal.cache.v1',JSON.stringify({ts:Date.now(),photos:photos.slice(0,3000)},(k,v)=>k==='queued'||k==='broken'||k[0]==='_'?undefined:v));}catch{}}
 function loadCache(){try{const c=JSON.parse(localStorage.getItem('newsgal.cache.v1')||'null'); if(!c) return 0; for(const p of c.photos){ p.queued=false; if(p.color&&p.color.fail) p.color=null; if(!byId.has(p.id)){byId.set(p.id,p);photos.push(p);} } return c.ts;}catch{return 0;}}
@@ -498,9 +523,9 @@ function flip(mutate){
   }
 }
 function setStatus(){
-  const st=Object.values(feedState); const loading=st.filter(s=>s==='loading').length, fail=st.filter(s=>s==='fail').length;
+  const st=Object.values(feedState); const loading=st.filter(s=>s==='loading').length, fail=st.filter(s=>s==='fail'||s==='limited').length;
   const parts=[`${current.length} photos`];
-  if(loading) parts.push(`loading ${loading} feed${loading>1?'s':''}…`);
+  if(fetchProgress) parts.push(`fetching feeds ${Math.min(fetchProgress.done,fetchProgress.total)}/${fetchProgress.total}…`); else if(loading) parts.push(`loading ${loading} feed${loading>1?'s':''}…`);
   if(fail) parts.push(`${fail} feed${fail>1?'s':''} unavailable`);
   const pending=analysisQueue.length+analyzing; if(pending) parts.push(`analysing colours ${analyzed}/${analyzeTotal}`);
   $('#status').textContent=parts.join(' · ');
